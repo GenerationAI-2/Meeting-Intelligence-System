@@ -251,6 +251,64 @@ async def list_decisions_endpoint(
     return result
 
 
+@app.delete("/api/meetings/{meeting_id}")
+async def delete_meeting_endpoint(meeting_id: int, user: str = Depends(get_current_user)):
+    """Delete a meeting and its associated decisions and actions."""
+    try:
+        with get_db() as cursor:
+            # Check if meeting exists
+            cursor.execute("SELECT MeetingId FROM Meeting WHERE MeetingId = ?", (meeting_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail=f"Meeting {meeting_id} not found")
+
+            # Delete in order due to foreign keys
+            cursor.execute("DELETE FROM Decision WHERE MeetingId = ?", (meeting_id,))
+            cursor.execute("DELETE FROM Action WHERE MeetingId = ?", (meeting_id,))
+            cursor.execute("DELETE FROM Meeting WHERE MeetingId = ?", (meeting_id,))
+
+        return {"success": True, "message": f"Meeting {meeting_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/actions/{action_id}")
+async def delete_action_endpoint(action_id: int, user: str = Depends(get_current_user)):
+    """Delete an action."""
+    try:
+        with get_db() as cursor:
+            cursor.execute("SELECT ActionId FROM Action WHERE ActionId = ?", (action_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail=f"Action {action_id} not found")
+
+            cursor.execute("DELETE FROM Action WHERE ActionId = ?", (action_id,))
+
+        return {"success": True, "message": f"Action {action_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/decisions/{decision_id}")
+async def delete_decision_endpoint(decision_id: int, user: str = Depends(get_current_user)):
+    """Delete a decision."""
+    try:
+        with get_db() as cursor:
+            cursor.execute("SELECT DecisionId FROM Decision WHERE DecisionId = ?", (decision_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail=f"Decision {decision_id} not found")
+
+            cursor.execute("DELETE FROM Decision WHERE DecisionId = ?", (decision_id,))
+
+        return {"success": True, "message": f"Decision {decision_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
