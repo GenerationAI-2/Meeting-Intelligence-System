@@ -30,19 +30,14 @@ azure_scheme = SingleTenantAzureAuthorizationCodeBearer(
 
 async def get_current_user(request: Request):
     # 1. MCP / Internal Bearer Token (for Claude)
-    # Check manual Authorization header for our static MCP token
+    # Check manual Authorization header for MCP token
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
-        # Check against MCP_AUTH_TOKEN env if set (re-using verify logic style)
-        # However, we don't have direct access to os.getenv("MCP_AUTH_TOKEN") cleanly here unless we add to config.
-        # Let's assume for now we check if it matches the known static token or we just let it fall through 
-        # to Azure validation if it's not our static one.
-        # Actually, if we use SingleTenantAzureAuthorizationCodeBearer, it will throw if the token isn't a valid Entra token.
-        # So we MUST intercept the MCP token first.
-        
-        if settings.mcp_auth_token and token == settings.mcp_auth_token:
-            return "claude.ai@system" # System user for MCP
+        # Look up user from token mapping
+        mcp_user = settings.get_mcp_user(token)
+        if mcp_user:
+            return mcp_user
 
     # 2. Azure Entra ID Token (for React Users)
     try:

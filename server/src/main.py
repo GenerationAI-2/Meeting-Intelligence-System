@@ -37,42 +37,55 @@ def run_http():
     )
     
     import os
+    import json
     from starlette.responses import Response
+    from .config import get_settings
 
-    MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
-    
-    endpoint_path = "/messages"
-    print(f"DEBUG: Initializing with Token Present: {bool(MCP_AUTH_TOKEN)}")
-    
-    if MCP_AUTH_TOKEN:
-        # Bake token into the endpoint path so it survives the SSE roundtrip
-        endpoint_path = f"/messages/token/{MCP_AUTH_TOKEN}"
-        
-    print(f"DEBUG: Selected SSE Endpoint Path: {endpoint_path}")
-    
-    sse = SseServerTransport(endpoint_path)
+    settings = get_settings()
+    valid_tokens = settings.get_valid_mcp_tokens()
+
+    print(f"DEBUG: Initializing with {len(valid_tokens)} MCP token(s) configured")
+
+    # Build endpoint paths for each token (for path-based auth on POST)
+    token_endpoints = {f"/messages/token/{token}": token for token in valid_tokens}
+
+    # We need one SSE transport per token endpoint for the POST routing
+    # But for SSE connection, we use a single /sse endpoint and validate via query param
+    # The SSE transport needs to know where to send POST messages - we'll use a dynamic approach
+    sse_transports = {}
+    for token in valid_tokens:
+        endpoint = f"/messages/token/{token}"
+        sse_transports[token] = SseServerTransport(endpoint)
+
+    # Fallback for no tokens configured
+    if not valid_tokens:
+        sse_transports["default"] = SseServerTransport("/messages")
+
+    def get_token_from_request(request):
+        """Extract token from header, query param, or path."""
+        # 1. Check Authorization Header
+        auth_header = request.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            return auth_header.split(" ")[1]
+
+        # 2. Check Query Parameter
+        token = request.query_params.get("token") or request.query_params.get("access_token")
+        if token:
+            return token
+
+        # 3. Check Path
+        path = request.url.path
+        if path in token_endpoints:
+            return token_endpoints[path]
+
+        return None
 
     async def verify_mcp_token(request):
-        if not MCP_AUTH_TOKEN:
-            return None # Auth disabled if no token configured
-            
-        # 1. Check Authorization Header (Standard)
-        auth_header = request.headers.get("authorization")
-        token = None
-        
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-        
-        # 2. Check Query Parameter (Initial SSE connection)
-        if not token:
-             token = request.query_params.get("token") or request.query_params.get("access_token")
+        if not valid_tokens:
+            return None  # Auth disabled if no tokens configured
 
-        if token and token == MCP_AUTH_TOKEN:
-            return None
-
-        # 3. Check Path (For subsequent POSTs to /messages/token/...)
-        # If the request path matches our expected tokenized endpoint, it's authorized.
-        if request.url.path == endpoint_path:
+        token = get_token_from_request(request)
+        if token and token in valid_tokens:
             return None
 
         return Response("Unauthorized: Missing or Invalid Token", status_code=401)
@@ -83,24 +96,44 @@ def run_http():
         if auth_error:
             return auth_error
 
+        # Get the appropriate transport for this user's token
+        token = get_token_from_request(request)
+        sse = sse_transports.get(token) or sse_transports.get("default")
+
         # Establish SSE connection
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await mcp_server.run(streams[0], streams[1], mcp_server.create_initialization_options())
-    
-    async def handle_messages(request):
+
+    async def handle_messages(request, token: str):
         # Verify Auth
         auth_error = await verify_mcp_token(request)
         if auth_error:
             return auth_error
-            
+
+        # Get the appropriate transport for this token
+        sse = sse_transports.get(token) or sse_transports.get("default")
+
         # Handle client messages (POST)
         await sse.handle_post_message(request.scope, request.receive, request._send)
 
     # Add routes to the FastAPI app
     fastapi_app.add_route("/sse", handle_sse, methods=["GET"])
-    
-    # Register the POST route (either /messages or /messages/token/XYZ)
-    fastapi_app.add_route(endpoint_path, handle_messages, methods=["POST"])
+
+    # Register POST routes for each token endpoint
+    for token in valid_tokens:
+        endpoint = f"/messages/token/{token}"
+        # Create a closure to capture the token value
+        def make_handler(t):
+            async def handler(request):
+                return await handle_messages(request, t)
+            return handler
+        fastapi_app.add_route(endpoint, make_handler(token), methods=["POST"])
+
+    # Fallback route if no tokens configured
+    if not valid_tokens:
+        async def handle_messages_default(request):
+            return await handle_messages(request, "default")
+        fastapi_app.add_route("/messages", handle_messages_default, methods=["POST"])
 
     print("Starting Meeting Intelligence Server (HTTP/SSE + REST)...")
     print("MCP SSE Endpoint: http://localhost:8000/sse")

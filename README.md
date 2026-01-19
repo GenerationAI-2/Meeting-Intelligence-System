@@ -20,10 +20,18 @@ A "Hybrid" production application combining a **React Frontend**, a **FastAPI Ba
 1.  Open [Claude.ai](https://claude.ai) and start a new chat.
 2.  Click the **Connection Icon** (🔌 / "Add custom connector").
 3.  **Name**: `Meeting Intelligence`
-4.  **URL**: Paste exactly this URL (includes your secure token):
+4.  **URL**: Paste your personal URL (each user has their own token):
+
+    **Caleb:**
     ```
     https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io/sse?token=e5ba95c8bd0fef507c42ddf1a07fee4251c4404c667b6574eecd6219209105e8
     ```
+
+    **Mark:**
+    ```
+    https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io/sse?token=4ec4afeaf2bb6de66637816da42d591fa01b670b07a5cc9469a44b82f5ca649e
+    ```
+
 5.  **OAuth**: Leave fields blank.
 6.  Click **Connect**. ✅
 

@@ -23,8 +23,31 @@ class Settings(BaseSettings):
     azure_tenant_id: str = Field(default="", validation_alias="API_AZURE_TENANT_ID")
     azure_client_id: str = Field(default="", validation_alias="API_AZURE_CLIENT_ID")  # The API App Registration Client ID (b5a8...)
     
-    # MCP Authentication
-    mcp_auth_token: str = ""
+    # MCP Authentication (JSON mapping of token -> email)
+    # Example: '{"token1": "user1@example.com", "token2": "user2@example.com"}'
+    mcp_auth_tokens: str = ""
+
+    def get_mcp_user(self, token: str) -> str | None:
+        """Look up user email from MCP token. Returns None if token invalid."""
+        if not self.mcp_auth_tokens:
+            return None
+        try:
+            import json
+            tokens = json.loads(self.mcp_auth_tokens)
+            return tokens.get(token)
+        except Exception:
+            return None
+
+    def get_valid_mcp_tokens(self) -> list[str]:
+        """Get list of all valid MCP tokens."""
+        if not self.mcp_auth_tokens:
+            return []
+        try:
+            import json
+            tokens = json.loads(self.mcp_auth_tokens)
+            return list(tokens.keys())
+        except Exception:
+            return []
     
     # Server
     host: str = "0.0.0.0"
