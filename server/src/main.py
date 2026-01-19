@@ -36,25 +36,46 @@ def run_http():
         allow_headers=["*"],
     )
     
-    sse = SseServerTransport("/messages")
-
     import os
     from starlette.responses import Response
-    
+
     MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
     
+    endpoint_path = "/messages"
+    print(f"DEBUG: Initializing with Token Present: {bool(MCP_AUTH_TOKEN)}")
+    
+    if MCP_AUTH_TOKEN:
+        # Bake token into the endpoint path so it survives the SSE roundtrip
+        endpoint_path = f"/messages/token/{MCP_AUTH_TOKEN}"
+        
+    print(f"DEBUG: Selected SSE Endpoint Path: {endpoint_path}")
+    
+    sse = SseServerTransport(endpoint_path)
+
     async def verify_mcp_token(request):
         if not MCP_AUTH_TOKEN:
             return None # Auth disabled if no token configured
             
+        # 1. Check Authorization Header (Standard)
         auth_header = request.headers.get("authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return Response("Unauthorized: Missing Bearer token", status_code=401)
-            
-        token = auth_header.split(" ")[1]
-        if token != MCP_AUTH_TOKEN:
-            return Response("Unauthorized: Invalid token", status_code=401)
-        return None
+        token = None
+        
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+        
+        # 2. Check Query Parameter (Initial SSE connection)
+        if not token:
+             token = request.query_params.get("token") or request.query_params.get("access_token")
+
+        if token and token == MCP_AUTH_TOKEN:
+            return None
+
+        # 3. Check Path (For subsequent POSTs to /messages/token/...)
+        # If the request path matches our expected tokenized endpoint, it's authorized.
+        if request.url.path == endpoint_path:
+            return None
+
+        return Response("Unauthorized: Missing or Invalid Token", status_code=401)
 
     async def handle_sse(request):
         # Verify Auth
@@ -63,9 +84,6 @@ def run_http():
             return auth_error
 
         # Establish SSE connection
-        # SseServerTransport expects raw ASGI scope/receive/send. 
-        # Starlette Request objects wrap these. We can access them via members.
-        # Note: request._send is an internal Starlette attribute but standard way to get the send channel.
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await mcp_server.run(streams[0], streams[1], mcp_server.create_initialization_options())
     
@@ -79,9 +97,10 @@ def run_http():
         await sse.handle_post_message(request.scope, request.receive, request._send)
 
     # Add routes to the FastAPI app
-    # Claude.ai expects /sse for the connection and /messages for communication
     fastapi_app.add_route("/sse", handle_sse, methods=["GET"])
-    fastapi_app.add_route("/messages", handle_messages, methods=["POST"])
+    
+    # Register the POST route (either /messages or /messages/token/XYZ)
+    fastapi_app.add_route(endpoint_path, handle_messages, methods=["POST"])
 
     print("Starting Meeting Intelligence Server (HTTP/SSE + REST)...")
     print("MCP SSE Endpoint: http://localhost:8000/sse")

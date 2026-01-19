@@ -14,42 +14,74 @@ from .mcp_server import mcp_server
 from fastapi import Depends, Header, status
 
 import jwt
+from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
+from .config import get_settings
 
-async def get_current_user(
-    request: Request,
-    x_ms_client_principal_name: str | None = Header(None, alias="X-MS-CLIENT-PRINCIPAL-NAME")
-):
-    # 1. Try Easy Auth Header (Injected by Azure)
-    if x_ms_client_principal_name:
-        user_email = x_ms_client_principal_name
-    else:
-        # 2. Try Standard Bearer Token (Injected by React App)
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, 
-                detail="Authentication required"
-            )
-        
+settings = get_settings()
+
+azure_scheme = SingleTenantAzureAuthorizationCodeBearer(
+    app_client_id=settings.azure_client_id,
+    tenant_id=settings.azure_tenant_id,
+    allow_guest_users=True,
+    scopes={
+        f"api://{settings.azure_client_id}/access_as_user": "Access Meeting Intelligence API",
+    }
+)
+
+async def get_current_user(request: Request):
+    # 1. MCP / Internal Bearer Token (for Claude)
+    # Check manual Authorization header for our static MCP token
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
-        try:
-            # Decode token (verify_signature=False for now to handle standard Entra ID tokens 
-            # without fetching JWKS keys manually. In production, we should configure 
-            # Azure Container Apps to enforce auth or implement full validation)
-            payload = jwt.decode(token, options={"verify_signature": False})
-            
-            # Extract email from claims
-            user_email = payload.get("preferred_username") or payload.get("upn") or payload.get("email")
-            
-            if not user_email:
-                raise HTTPException(status_code=401, detail="Token missing email claim")
-                
-        except Exception as e:
-            print(f"Token decode error: {e}")
-            raise HTTPException(status_code=401, detail="Invalid token")
+        # Check against MCP_AUTH_TOKEN env if set (re-using verify logic style)
+        # However, we don't have direct access to os.getenv("MCP_AUTH_TOKEN") cleanly here unless we add to config.
+        # Let's assume for now we check if it matches the known static token or we just let it fall through 
+        # to Azure validation if it's not our static one.
+        # Actually, if we use SingleTenantAzureAuthorizationCodeBearer, it will throw if the token isn't a valid Entra token.
+        # So we MUST intercept the MCP token first.
+        
+        if settings.mcp_auth_token and token == settings.mcp_auth_token:
+            return "claude.ai@system" # System user for MCP
+
+    # 2. Azure Entra ID Token (for React Users)
+    try:
+        from fastapi.security import SecurityScopes
+        # Validates signature, audience, issuer, and expiration
+        # Throws HTTPException if invalid
+        # Fix: Must pass SecurityScopes when calling manually
+        token_payload = await azure_scheme(request, SecurityScopes(scopes=[]))
+        # Fix: token_payload can be a User object or dict. Use a safe helper.
+        def get_val(obj, key):
+            # Try dict access
+            try:
+                if isinstance(obj, dict):
+                    return obj.get(key)
+                # Try attribute access
+                return getattr(obj, key, None)
+            except Exception:
+                return None
+
+        user_email = get_val(token_payload, "preferred_username") or get_val(token_payload, "upn") or get_val(token_payload, "email")
+    except Exception as e:
+        # Map Azure Auth errors to 401
+        print(f"Auth Error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # Whitelist Check
     allowed_users = ["caleb.lucas@myadvisor.co.nz", "mark.lucas@myadvisor.co.nz"]
+    
+    if not user_email:
+        print("Auth Error: No email found in token payload")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing email/upn claim"
+        )
+
     if user_email.lower() not in allowed_users:
          raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
@@ -59,12 +91,12 @@ async def get_current_user(
     return user_email
 
 
-app = FastAPI(title="Meeting Intelligence API", version="1.0.0")
+app = FastAPI(title="Meeting Intelligence API", version="1.0.0", swagger_ui_oauth2_redirect_url="/oauth2-redirect")
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://claude.ai"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://claude.ai", "https://preview.claude.ai", "https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

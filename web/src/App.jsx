@@ -18,8 +18,8 @@ function AuthenticationHandler({ children }) {
         setAccessTokenProvider(async () => {
             if (accounts.length > 0) {
                 const request = {
-                    // Use the Client ID as scope for the app itself
-                    scopes: [`${import.meta.env.VITE_AZURE_CLIENT_ID}/.default`],
+                    // Use the API Client ID and the exposed scope
+                    scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
                     account: accounts[0]
                 };
                 try {

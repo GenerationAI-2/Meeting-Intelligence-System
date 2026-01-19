@@ -4,6 +4,8 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 
+from pydantic import Field
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
@@ -17,6 +19,12 @@ class Settings(BaseSettings):
     
     # API Authentication
     api_key: str = ""
+    # Rename env vars to avoid conflict with DefaultAzureCredential
+    azure_tenant_id: str = Field(default="", validation_alias="API_AZURE_TENANT_ID")
+    azure_client_id: str = Field(default="", validation_alias="API_AZURE_CLIENT_ID")  # The API App Registration Client ID (b5a8...)
+    
+    # MCP Authentication
+    mcp_auth_token: str = ""
     
     # Server
     host: str = "0.0.0.0"

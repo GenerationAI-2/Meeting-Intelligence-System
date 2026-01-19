@@ -1,77 +1,95 @@
-# Meeting Intelligence
+# Meeting Intelligence System (Live)
 
-Meeting intelligence system with MCP server for Claude and React web interface.
+A "Hybrid" production application combining a **React Frontend**, a **FastAPI Backend**, and a **Model Context Protocol (MCP) Server** into a single secure deployment on Azure Container Apps.
 
-## Project Structure
+**Live URL:** 🟢 [https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io](https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io)
 
-```
-meeting-intelligence/
-├── server/          # MCP Server (Python/FastAPI)
-├── web/             # React Web UI
-└── schema.sql       # Database schema
-```
+---
+## 🚀 Features
 
-## Quick Start
+*   **Hybrid Architecture**: Frontend and Backend served from a single secure container (No CORS issues).
+*   **Dual Authentication**:
+    *   **Web UI**: Secured by Microsoft Entra ID (MSAL).
+    *   **MCP Server**: Secured by Static Bearer Token (Path-Based Propagation).
+*   **Claude Integration**: Full support for Claude.ai "Custom Connectors" and Claude Desktop.
+*   **Managed Identity**: Secure passwordless connection to Azure SQL Database.
 
-### 1. Database Setup
+---
+## 🔌 How to Connect Claude.ai (Web)
 
-Run `schema.sql` on your Azure SQL Database to create the tables.
+1.  Open [Claude.ai](https://claude.ai) and start a new chat.
+2.  Click the **Connection Icon** (🔌 / "Add custom connector").
+3.  **Name**: `Meeting Intelligence`
+4.  **URL**: Paste exactly this URL (includes your secure token):
+    ```
+    https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io/sse?token=e5ba95c8bd0fef507c42ddf1a07fee4251c4404c667b6574eecd6219209105e8
+    ```
+5.  **OAuth**: Leave fields blank.
+6.  Click **Connect**. ✅
 
-### 2. MCP Server
+---
+## 🛠️ Deployment
 
-```bash
-cd server
-cp .env.template .env
-# Edit .env with your credentials
-pip install -r requirements.txt
-python -m src.main
-```
+The system is deployed to **Azure Container Apps** using a custom script that handles:
+1.  Building the React Frontend (Vite).
+2.  Packaging it into the Python Backend container.
+3.  Pushing to Azure Container Registry (ACR).
+4.  Forcing an update on the Container App (with cache busting).
 
-### 3. Claude Desktop Integration
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "meeting-intelligence": {
-      "command": "python",
-      "args": ["-m", "src.main"],
-      "cwd": "/path/to/meeting-intelligence/server",
-      "env": {
-        "AZURE_SQL_SERVER": "your-server.database.windows.net",
-        "AZURE_SQL_DATABASE": "meeting-intelligence",
-        "FIREFLIES_API_KEY": "your-actual-key-here"
-      }
-    }
-  }
-}
-```
-
-### 4. Web Interface
-
-```bash
-cd web
-npm install
-npm run dev
-```
-
-## Available Tools
-
-| Category | Tools |
-|----------|-------|
-| Meetings | list_meetings, get_meeting, search_meetings, create_meeting, update_meeting |
-| Actions | list_actions, get_action, create_action, update_action, complete_action, park_action, delete_action |
-| Decisions | list_decisions, create_decision |
-| Fireflies | search_fireflies_transcripts, import_fireflies_transcript |
-
-## Deployment
-
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for full details on the Azure Container Apps setup.
-
-**Quick Redeploy:**
+**To Deploy Updates:**
 ```bash
 ./deploy.sh
 ```
+*Note: The script automatically injects a `CACHEBUST` argument to ensure Azure pulls the absolute latest code.*
 
-**Live URL:** `https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io`
+---
+## 💻 Local Development
+
+1.  **Backend**
+    ```bash
+    cd server
+    uv venv
+    source .venv/bin/activate
+    uv pip install -r requirements.txt
+    python -m src.main --http  # Runs on http://localhost:8000
+    ```
+
+2.  **Frontend**
+    ```bash
+    cd web
+    npm install
+    npm run dev  # Runs on http://localhost:5173
+    ```
+
+3.  **Claude Desktop**
+    Add to `claude_desktop_config.json`:
+    ```json
+    "mcpServers": {
+      "meeting-intelligence": {
+        "command": "python",
+        "args": ["-m", "src.main"],
+        "cwd": "/absolute/path/to/meeting-intelligence/server",
+        "env": {
+          "AZURE_SQL_SERVER": "...",
+          "MCP_AUTH_TOKEN": "..."
+        }
+      }
+    }
+    ```
+
+---
+## 📂 Project Structure
+
+```
+meeting-intelligence/
+├── deploy.sh            # Master deployment script
+├── schema.sql           # Database schema
+├── server/
+│   ├── Dockerfile       # Multi-stage build (Node -> Python)
+│   ├── src/
+│   │   ├── main.py      # Entry point (HTTP + MCP logic)
+│   │   ├── api.py       # FastAPI REST Endpoints
+│   │   ├── mcp_server.py # MCP Tool Definitions
+│   │   └── database.py  # SQL Connection (Managed Identity)
+└── web/                 # React SPA (Vite + Tailwind + MSAL)
+```

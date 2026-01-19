@@ -28,10 +28,13 @@ az containerapp env create --name $ACA_ENV --resource-group $RG --location $LOCA
 echo "Building and Pushing Docker Image..."
 # Use root context (.) to allow access to both web/ and server/ directories
 # Pass React Environment Variables as Build Args
-az acr build --registry $ACR_NAME --image $APP_NAME:latest \
+az acr build --registry $ACR_NAME --image $APP_NAME:v12-force \
   --file server/Dockerfile \
-  --build-arg VITE_AZURE_CLIENT_ID="d38c25fa-3ce8-4648-87ab-079dcc52754b" \
+  --build-arg VITE_SPA_CLIENT_ID="d38c25fa-3ce8-4648-87ab-079dcc52754b" \
+  --build-arg VITE_API_CLIENT_ID="b5a8a565-e18e-42a6-a57b-ade6d17aa197" \
   --build-arg VITE_AZURE_TENANT_ID="12e7fcaa-f776-4545-aacf-e89be7737cf3" \
+  --build-arg VITE_API_URL="/api" \
+  --build-arg CACHEBUST=$(date +%s) \
   .
 
 # 5. Create/Update Container App
@@ -40,7 +43,7 @@ az containerapp create \
   --name $APP_NAME \
   --resource-group $RG \
   --environment $ACA_ENV \
-  --image "$ACR_NAME.azurecr.io/$APP_NAME:latest" \
+  --image "$ACR_NAME.azurecr.io/$APP_NAME:v12-force" \
   --target-port 8000 \
   --ingress external \
   --min-replicas 1 \
@@ -50,7 +53,9 @@ az containerapp create \
     AZURE_SQL_SERVER="genai-sql-server.database.windows.net" \
     AZURE_SQL_DATABASE="meeting-intelligence" \
     FIREFLIES_API_KEY="aff7c0e4-abdd-4a16-a799-473f6593382a" \
-    MCP_AUTH_TOKEN="e5ba95c8bd0fef507c42ddf1a07fee4251c4404c667b6574eecd6219209105e8"
+    MCP_AUTH_TOKEN="e5ba95c8bd0fef507c42ddf1a07fee4251c4404c667b6574eecd6219209105e8" \
+    API_AZURE_TENANT_ID="12e7fcaa-f776-4545-aacf-e89be7737cf3" \
+    API_AZURE_CLIENT_ID="b5a8a565-e18e-42a6-a57b-ade6d17aa197"
 
 # 6. Get Details
 APP_URL=$(az containerapp show --name $APP_NAME --resource-group $RG --query properties.configuration.ingress.fqdn -o tsv)

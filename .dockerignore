@@ -1,0 +1,17 @@
+
+# Exclude git
+.git
+.gitignore
+
+# Exclude virtual envs
+.venv
+server/.venv
+
+# Exclude local temp files
+__pycache__
+*.pyc
+.DS_Store
+.idea
+.vscode
+
+# Ensure server/src is NOT ignored (no allowlist needed unless we ignore parent)

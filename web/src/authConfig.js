@@ -6,7 +6,7 @@
 export const msalConfig = {
     auth: {
         // Replace with your Azure AD app registration client ID
-        clientId: import.meta.env.VITE_AZURE_CLIENT_ID || 'your-client-id',
+        clientId: import.meta.env.VITE_SPA_CLIENT_ID || 'your-spa-client-id',
         // Replace with your tenant ID
         authority: `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID || 'your-tenant-id'}`,
         redirectUri: window.location.origin,
@@ -19,7 +19,7 @@ export const msalConfig = {
 };
 
 export const loginRequest = {
-    scopes: ['User.Read'],
+    scopes: [],
 };
 
 export const apiConfig = {
