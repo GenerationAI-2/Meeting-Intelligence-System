@@ -12,7 +12,8 @@ Reference document for all field constraints in the Meeting Intelligence System.
 | Attendees | NVARCHAR(MAX) | No limit | No | Comma-separated emails |
 | Summary | NVARCHAR(MAX) | No limit | No | Markdown supported |
 | RawTranscript | NVARCHAR(MAX) | No limit | No | Plain text |
-| Source | NVARCHAR | 50 | No | e.g., "Manual", "fireflies" |
+| Tags | NVARCHAR(MAX) | No limit | No | Comma-separated tags |
+| Source | NVARCHAR | 50 | No | e.g., "Manual", "Fireflies" |
 | SourceMeetingId | NVARCHAR | 255 | No | External system ID |
 | CreatedAt | DATETIME2 | - | Auto | ISO 8601 |
 | CreatedBy | NVARCHAR | 128 | Yes | Email address |
@@ -54,6 +55,7 @@ Reference document for all field constraints in the Meeting Intelligence System.
 4. **Markdown**: Only the meeting Summary field supports markdown formatting
 5. **No limit fields**: NVARCHAR(MAX) fields have no practical limit (up to 2GB), but keep content reasonable
 6. **Required fields**: Fields marked "Yes" must be provided; "Auto" fields are set by the system
+7. **Tags**: Use comma-separated lowercase tags (e.g., "planning, engineering, sprint-1")
 
 ## Field Limits Summary
 
@@ -65,4 +67,4 @@ Reference document for all field constraints in the Meeting Intelligence System.
 | SourceMeetingId | 255 chars |
 | Status | 20 chars |
 | CreatedBy/UpdatedBy | 128 chars |
-| ActionText, DecisionText, Notes, Context, Summary, Transcript, Attendees | No limit |
+| ActionText, DecisionText, Notes, Context, Summary, Transcript, Attendees, Tags | No limit |

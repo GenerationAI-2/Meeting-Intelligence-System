@@ -8,7 +8,8 @@ from ..database import get_db, row_to_dict, rows_to_list
 def list_meetings(
     limit: int = 20,
     days_back: int = 30,
-    attendee: Optional[str] = None
+    attendee: Optional[str] = None,
+    tag: Optional[str] = None
 ) -> dict:
     """
     List recent meetings, sorted by date descending (most recent first).
@@ -18,6 +19,8 @@ def list_meetings(
         days_back: How far back to search in days. Default 30, min 1.
         attendee: Optional. Filter by attendee email (partial match).
                   Example: attendee="john@company.com" returns meetings John attended.
+        tag: Optional. Filter by tag (partial match).
+             Example: tag="planning" returns meetings tagged with planning.
 
     Returns:
         {
@@ -25,7 +28,7 @@ def list_meetings(
             "count": int        # Number of results returned
         }
 
-        Each meeting contains: id, title, date, attendees, source.
+        Each meeting contains: id, title, date, attendees, source, tags.
     """
     # Validate inputs
     if limit < 1:
@@ -37,24 +40,27 @@ def list_meetings(
 
     try:
         with get_db() as cursor:
-            # Build query with optional attendee filter
+            # Build query with optional filters
+            conditions = ["MeetingDate >= DATEADD(day, -?, GETUTCDATE())"]
+            params = [days_back]
+
             if attendee:
-                cursor.execute("""
-                    SELECT MeetingId, Title, MeetingDate, Attendees, Source
-                    FROM Meeting
-                    WHERE MeetingDate >= DATEADD(day, -?, GETUTCDATE())
-                      AND Attendees LIKE ?
-                    ORDER BY MeetingDate DESC
-                    OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
-                """, (days_back, f"%{attendee}%", limit))
-            else:
-                cursor.execute("""
-                    SELECT MeetingId, Title, MeetingDate, Attendees, Source
-                    FROM Meeting
-                    WHERE MeetingDate >= DATEADD(day, -?, GETUTCDATE())
-                    ORDER BY MeetingDate DESC
-                    OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
-                """, (days_back, limit))
+                conditions.append("Attendees LIKE ?")
+                params.append(f"%{attendee}%")
+
+            if tag:
+                conditions.append("Tags LIKE ?")
+                params.append(f"%{tag}%")
+
+            params.append(limit)
+
+            cursor.execute(f"""
+                SELECT MeetingId, Title, MeetingDate, Attendees, Source, Tags
+                FROM Meeting
+                WHERE {' AND '.join(conditions)}
+                ORDER BY MeetingDate DESC
+                OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
+            """, tuple(params))
 
             rows = cursor.fetchall()
             meetings = []
@@ -64,7 +70,8 @@ def list_meetings(
                     "title": row[1],
                     "date": row[2].isoformat() if row[2] else None,
                     "attendees": row[3],
-                    "source": row[4]
+                    "source": row[4],
+                    "tags": row[5]
                 })
 
             return {"meetings": meetings, "count": len(meetings)}
@@ -87,7 +94,8 @@ def get_meeting(meeting_id: int) -> dict:
         - transcript: Raw transcript or null
         - summary: Meeting summary (supports markdown) or null
         - attendees: Comma-separated attendee list or null
-        - source: Source system (e.g., "Manual", "fireflies")
+        - tags: Comma-separated tags or null
+        - source: Source system (e.g., "Manual", "Fireflies")
         - source_meeting_id: External system ID or null
         - created_at: ISO timestamp
         - created_by: Email of creator
@@ -96,21 +104,21 @@ def get_meeting(meeting_id: int) -> dict:
     """
     if not isinstance(meeting_id, int) or meeting_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "meeting_id must be a positive integer"}
-    
+
     try:
         with get_db() as cursor:
             cursor.execute("""
                 SELECT MeetingId, Title, MeetingDate, RawTranscript, Summary,
-                       Attendees, Source, SourceMeetingId, CreatedAt, CreatedBy,
+                       Attendees, Source, SourceMeetingId, Tags, CreatedAt, CreatedBy,
                        UpdatedAt, UpdatedBy
                 FROM Meeting
                 WHERE MeetingId = ?
             """, (meeting_id,))
-            
+
             row = cursor.fetchone()
             if not row:
                 return {"error": True, "code": "NOT_FOUND", "message": f"Meeting with ID {meeting_id} not found"}
-            
+
             return {
                 "id": row[0],
                 "title": row[1],
@@ -120,10 +128,11 @@ def get_meeting(meeting_id: int) -> dict:
                 "attendees": row[5],
                 "source": row[6],
                 "source_meeting_id": row[7],
-                "created_at": row[8].isoformat() if row[8] else None,
-                "created_by": row[9],
-                "updated_at": row[10].isoformat() if row[10] else None,
-                "updated_by": row[11]
+                "tags": row[8],
+                "created_at": row[9].isoformat() if row[9] else None,
+                "created_by": row[10],
+                "updated_at": row[11].isoformat() if row[11] else None,
+                "updated_by": row[12]
             }
     except Exception as e:
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
@@ -195,7 +204,8 @@ def create_meeting(
     summary: Optional[str] = None,
     transcript: Optional[str] = None,
     source: str = "Manual",
-    source_meeting_id: Optional[str] = None
+    source_meeting_id: Optional[str] = None,
+    tags: Optional[str] = None
 ) -> dict:
     """
     Create a new meeting record.
@@ -210,41 +220,44 @@ def create_meeting(
         transcript: Optional. Raw transcript. Plain text. No limit.
         source: Optional. Source system. Max 50 characters. Default "Manual".
         source_meeting_id: Optional. External system ID. Max 255 characters.
+        tags: Optional. Comma-separated tags for categorisation. No limit.
+              Example: "planning, engineering, sprint-1"
 
     Returns:
-        Created meeting with: id, title, date, source, message.
+        Created meeting with: id, title, date, source, tags, message.
     """
     if not title or len(title.strip()) == 0:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Title is required"}
     if not meeting_date:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Meeting date is required"}
-    
+
     try:
         parsed_date = datetime.fromisoformat(meeting_date.replace('Z', '+00:00'))
     except ValueError:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Invalid date format. Use ISO format."}
-    
+
     now = datetime.utcnow()
-    
+
     try:
         with get_db() as cursor:
             cursor.execute("""
-                INSERT INTO Meeting (Title, MeetingDate, RawTranscript, Summary, 
-                                     Attendees, Source, SourceMeetingId,
+                INSERT INTO Meeting (Title, MeetingDate, RawTranscript, Summary,
+                                     Attendees, Source, SourceMeetingId, Tags,
                                      CreatedAt, CreatedBy, UpdatedAt, UpdatedBy)
                 OUTPUT INSERTED.MeetingId
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (title, parsed_date, transcript, summary, attendees, 
-                  source, source_meeting_id, now, user_email, now, user_email))
-            
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (title, parsed_date, transcript, summary, attendees,
+                  source, source_meeting_id, tags, now, user_email, now, user_email))
+
             row = cursor.fetchone()
             meeting_id = row[0]
-            
+
             return {
                 "id": meeting_id,
                 "title": title,
                 "date": parsed_date.isoformat(),
                 "source": source,
+                "tags": tags,
                 "message": "Meeting created successfully"
             }
     except Exception as e:
@@ -257,7 +270,8 @@ def update_meeting(
     title: Optional[str] = None,
     summary: Optional[str] = None,
     attendees: Optional[str] = None,
-    transcript: Optional[str] = None
+    transcript: Optional[str] = None,
+    tags: Optional[str] = None
 ) -> dict:
     """
     Update an existing meeting. Only provided fields are updated.
@@ -269,6 +283,8 @@ def update_meeting(
         summary: Optional. New/updated summary. Markdown supported. No limit.
         attendees: Optional. Updated attendee list. No limit.
         transcript: Optional. Updated raw transcript. Plain text. No limit.
+        tags: Optional. Updated tags. Comma-separated. No limit.
+              Example: "planning, engineering, sprint-1"
 
     Returns:
         Full updated meeting record (same format as get_meeting).
@@ -297,7 +313,11 @@ def update_meeting(
     if transcript is not None:
         updates.append("RawTranscript = ?")
         params.append(transcript)
-    
+
+    if tags is not None:
+        updates.append("Tags = ?")
+        params.append(tags)
+
     if not updates:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "No fields to update"}
     

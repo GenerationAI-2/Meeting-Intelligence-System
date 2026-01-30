@@ -19,6 +19,7 @@ class MeetingBase(BaseModel):
     attendees: Optional[str] = None
     summary: Optional[str] = None
     transcript: Optional[str] = None
+    tags: Optional[str] = None
     source: str = "Manual"
     source_meeting_id: Optional[str] = None
 
@@ -29,6 +30,7 @@ class MeetingCreate(BaseModel):
     attendees: Optional[str] = None
     summary: Optional[str] = None
     transcript: Optional[str] = None
+    tags: Optional[str] = None
     source: str = "Manual"
     source_meeting_id: Optional[str] = None
 
@@ -37,6 +39,7 @@ class MeetingUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=255)
     summary: Optional[str] = None
     attendees: Optional[str] = None
+    tags: Optional[str] = None
 
 
 class MeetingListItem(BaseModel):
@@ -44,6 +47,7 @@ class MeetingListItem(BaseModel):
     title: str
     date: datetime
     attendees: Optional[str]
+    tags: Optional[str]
     source: str
 
 
@@ -54,6 +58,7 @@ class MeetingDetail(BaseModel):
     attendees: Optional[str]
     summary: Optional[str]
     transcript: Optional[str]
+    tags: Optional[str]
     source: str
     source_meeting_id: Optional[str]
     created_at: datetime
@@ -122,12 +127,3 @@ class DecisionListItem(BaseModel):
     meeting_id: int
     meeting_title: str
     created_at: datetime
-
-
-# Fireflies Schemas
-class FirefliesTranscript(BaseModel):
-    id: str
-    title: str
-    date: datetime
-    duration: int
-    participants: list[str]

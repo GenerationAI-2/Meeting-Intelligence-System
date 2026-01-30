@@ -17,13 +17,14 @@ async def list_tools() -> list:
         # Meeting Tools
         Tool(
             name="list_meetings",
-            description="List recent meetings. Returns id, title, date, attendees, source. Can filter by attendee email.",
+            description="List recent meetings. Returns id, title, date, attendees, source, tags. Can filter by attendee or tag.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Maximum results (default 20, max 100)", "default": 20},
                     "days_back": {"type": "integer", "description": "How far back to search (default 30)", "default": 30},
-                    "attendee": {"type": "string", "description": "Filter by attendee email (partial match)"}
+                    "attendee": {"type": "string", "description": "Filter by attendee email (partial match)"},
+                    "tag": {"type": "string", "description": "Filter by tag (partial match)"}
                 }
             }
         ),
@@ -62,14 +63,15 @@ async def list_tools() -> list:
                     "summary": {"type": "string", "description": "Meeting summary"},
                     "transcript": {"type": "string", "description": "Raw transcript"},
                     "source": {"type": "string", "description": "Source system (default 'Manual')", "default": "Manual"},
-                    "source_meeting_id": {"type": "string", "description": "External ID"}
+                    "source_meeting_id": {"type": "string", "description": "External ID"},
+                    "tags": {"type": "string", "description": "Comma-separated tags (e.g., 'planning, engineering')"}
                 },
                 "required": ["title", "meeting_date"]
             }
         ),
         Tool(
             name="update_meeting",
-            description="Update an existing meeting. Can update title, summary, attendees, or transcript.",
+            description="Update an existing meeting. Can update title, summary, attendees, transcript, or tags.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -77,7 +79,8 @@ async def list_tools() -> list:
                     "title": {"type": "string", "description": "New title"},
                     "summary": {"type": "string", "description": "New/updated summary"},
                     "attendees": {"type": "string", "description": "Updated attendees"},
-                    "transcript": {"type": "string", "description": "Updated raw transcript"}
+                    "transcript": {"type": "string", "description": "Updated raw transcript"},
+                    "tags": {"type": "string", "description": "Updated tags (comma-separated)"}
                 },
                 "required": ["meeting_id"]
             }
@@ -215,7 +218,8 @@ async def call_tool(name: str, arguments: dict) -> list:
             result = meetings.list_meetings(
                 limit=arguments.get("limit", 20),
                 days_back=arguments.get("days_back", 30),
-                attendee=arguments.get("attendee")
+                attendee=arguments.get("attendee"),
+                tag=arguments.get("tag")
             )
         elif name == "get_meeting":
             result = meetings.get_meeting(arguments["meeting_id"])
@@ -233,7 +237,8 @@ async def call_tool(name: str, arguments: dict) -> list:
                 summary=arguments.get("summary"),
                 transcript=arguments.get("transcript"),
                 source=arguments.get("source", "Manual"),
-                source_meeting_id=arguments.get("source_meeting_id")
+                source_meeting_id=arguments.get("source_meeting_id"),
+                tags=arguments.get("tags")
             )
         elif name == "update_meeting":
             result = meetings.update_meeting(
@@ -242,7 +247,8 @@ async def call_tool(name: str, arguments: dict) -> list:
                 title=arguments.get("title"),
                 summary=arguments.get("summary"),
                 attendees=arguments.get("attendees"),
-                transcript=arguments.get("transcript")
+                transcript=arguments.get("transcript"),
+                tags=arguments.get("tags")
             )
         
         # Action Tools

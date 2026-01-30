@@ -11,6 +11,7 @@ CREATE TABLE Meeting (
     Attendees NVARCHAR(MAX),
     Source NVARCHAR(50) DEFAULT 'Manual',
     SourceMeetingId NVARCHAR(255),
+    Tags NVARCHAR(MAX),
     CreatedAt DATETIME2 DEFAULT GETUTCDATE(),
     CreatedBy NVARCHAR(128) NOT NULL,
     UpdatedAt DATETIME2 DEFAULT GETUTCDATE(),
