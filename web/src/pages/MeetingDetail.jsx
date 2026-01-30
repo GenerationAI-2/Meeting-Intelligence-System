@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import { meetingsApi } from '../services/api';
 
 function MeetingDetail() {
@@ -94,7 +95,7 @@ function MeetingDetail() {
                 <div className="card">
                     <h2 className="text-lg font-semibold text-gray-900 mb-3">Summary</h2>
                     <div className="prose prose-gray max-w-none">
-                        <p className="text-gray-700 whitespace-pre-wrap">{meeting.summary}</p>
+                        <ReactMarkdown>{meeting.summary}</ReactMarkdown>
                     </div>
                 </div>
             )}

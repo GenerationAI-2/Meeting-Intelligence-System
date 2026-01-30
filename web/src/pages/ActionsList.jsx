@@ -127,9 +127,13 @@ function ActionsList() {
                             </tr>
                         ) : (
                             actions.map((action) => (
-                                <tr key={action.id} className="hover:bg-gray-50">
+                                <tr
+                                    key={action.id}
+                                    className="hover:bg-gray-50 cursor-pointer"
+                                    onClick={() => window.location.href = `/actions/${action.id}`}
+                                >
                                     <td className="table-cell max-w-md">
-                                        <p className="truncate">{action.text}</p>
+                                        <p className="line-clamp-2 text-brand-600 hover:text-brand-700">{action.text}</p>
                                     </td>
                                     <td className="table-cell text-gray-500">
                                         {action.owner}
@@ -140,7 +144,11 @@ function ActionsList() {
                                     <td className="table-cell">
                                         <select
                                             value={action.status}
-                                            onChange={(e) => handleStatusChange(action.id, e.target.value)}
+                                            onChange={(e) => {
+                                                e.stopPropagation();
+                                                handleStatusChange(action.id, e.target.value);
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
                                             className={`rounded px-2 py-1 text-sm border-0 cursor-pointer ${action.status === 'Complete'
                                                     ? 'bg-green-100 text-green-800'
                                                     : action.status === 'Parked'
@@ -158,6 +166,7 @@ function ActionsList() {
                                             <Link
                                                 to={`/meetings/${action.meeting_id}`}
                                                 className="text-brand-600 hover:text-brand-700"
+                                                onClick={(e) => e.stopPropagation()}
                                             >
                                                 View Meeting
                                             </Link>

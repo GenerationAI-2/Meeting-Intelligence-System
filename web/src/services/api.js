@@ -78,4 +78,6 @@ export const decisionsApi = {
         const query = new URLSearchParams(params).toString();
         return fetchApi(`/decisions${query ? `?${query}` : ''}`);
     },
+
+    get: (id) => fetchApi(`/decisions/${id}`),
 };

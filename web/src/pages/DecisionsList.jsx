@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { decisionsApi, meetingsApi } from '../services/api';
 
 function DecisionsList() {
@@ -83,7 +83,7 @@ function DecisionsList() {
                     >
                         <option value="">All Meetings</option>
                         {meetings.map((m) => (
-                            <option key={m.id} value={m.id}>{m.title}</option>
+                            <option key={m.id} value={m.id}>{formatDate(m.date)} — {m.title}</option>
                         ))}
                     </select>
                 </div>
@@ -114,9 +114,13 @@ function DecisionsList() {
                             </tr>
                         ) : (
                             decisions.map((decision) => (
-                                <tr key={decision.id} className="hover:bg-gray-50">
+                                <tr
+                                    key={decision.id}
+                                    className="hover:bg-gray-50 cursor-pointer"
+                                    onClick={() => window.location.href = `/decisions/${decision.id}`}
+                                >
                                     <td className="table-cell max-w-md">
-                                        <p className="line-clamp-2">{decision.text}</p>
+                                        <p className="line-clamp-2 text-brand-600 hover:text-brand-700">{decision.text}</p>
                                     </td>
                                     <td className="table-cell text-gray-500 max-w-xs">
                                         <p className="truncate">{decision.context || '-'}</p>
@@ -125,6 +129,7 @@ function DecisionsList() {
                                         <Link
                                             to={`/meetings/${decision.meeting_id}`}
                                             className="text-brand-600 hover:text-brand-700"
+                                            onClick={(e) => e.stopPropagation()}
                                         >
                                             {decision.meeting_title}
                                         </Link>

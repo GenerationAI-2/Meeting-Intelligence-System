@@ -11,8 +11,10 @@
     "dependencies": {
         "@azure/msal-browser": "^3.30.0",
         "@azure/msal-react": "^2.2.0",
+        "@tailwindcss/typography": "^0.5.19",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
+        "react-markdown": "^10.1.0",
         "react-router-dom": "^6.21.0"
     },
     "devDependencies": {

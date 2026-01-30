@@ -275,6 +275,17 @@ async def list_decisions_endpoint(
     return result
 
 
+@app.get("/api/decisions/{decision_id}")
+async def get_decision_endpoint(decision_id: int, user: str = Depends(get_current_user)):
+    """Get decision details."""
+    result = decisions.get_decision(decision_id)
+    if result.get("error"):
+        if result.get("code") == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
 @app.delete("/api/meetings/{meeting_id}")
 async def delete_meeting_endpoint(meeting_id: int, user: str = Depends(get_current_user)):
     """Delete a meeting and its associated decisions and actions."""

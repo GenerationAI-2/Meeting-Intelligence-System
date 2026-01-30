@@ -66,6 +66,46 @@ def list_decisions(
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+def get_decision(decision_id: int) -> dict:
+    """
+    Get full details of a specific decision.
+
+    Args:
+        decision_id: The decision ID
+
+    Returns:
+        Full decision record including context and timestamps
+    """
+    if not isinstance(decision_id, int) or decision_id < 1:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "decision_id must be a positive integer"}
+
+    try:
+        with get_db() as cursor:
+            cursor.execute("""
+                SELECT d.DecisionId, d.DecisionText, d.Context, d.MeetingId,
+                       m.Title, d.CreatedAt, d.CreatedBy
+                FROM Decision d
+                JOIN Meeting m ON d.MeetingId = m.MeetingId
+                WHERE d.DecisionId = ?
+            """, (decision_id,))
+
+            row = cursor.fetchone()
+            if not row:
+                return {"error": True, "code": "NOT_FOUND", "message": f"Decision with ID {decision_id} not found"}
+
+            return {
+                "id": row[0],
+                "text": row[1],
+                "context": row[2],
+                "meeting_id": row[3],
+                "meeting_title": row[4],
+                "created_at": row[5].isoformat() if row[5] else None,
+                "created_by": row[6]
+            }
+    except Exception as e:
+        return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+
+
 def create_decision(
     meeting_id: int,
     decision_text: str,

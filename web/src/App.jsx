@@ -6,7 +6,9 @@ import Layout from './components/Layout';
 import MeetingsList from './pages/MeetingsList';
 import MeetingDetail from './pages/MeetingDetail';
 import ActionsList from './pages/ActionsList';
+import ActionDetail from './pages/ActionDetail';
 import DecisionsList from './pages/DecisionsList';
+import DecisionDetail from './pages/DecisionDetail';
 import Login from './pages/Login';
 import { setAccessTokenProvider } from './services/api';
 
@@ -71,7 +73,9 @@ function App() {
                                     <Route path="/meetings" element={<MeetingsList />} />
                                     <Route path="/meetings/:id" element={<MeetingDetail />} />
                                     <Route path="/actions" element={<ActionsList />} />
+                                    <Route path="/actions/:id" element={<ActionDetail />} />
                                     <Route path="/decisions" element={<DecisionsList />} />
+                                    <Route path="/decisions/:id" element={<DecisionDetail />} />
                                 </Routes>
                             </Layout>
                         </ProtectedRoute>
