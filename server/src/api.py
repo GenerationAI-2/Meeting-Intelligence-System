@@ -19,6 +19,12 @@ from .config import get_settings
 
 settings = get_settings()
 
+# Startup diagnostics - log config values (redacted)
+print(f"[STARTUP] Azure Tenant ID: {settings.azure_tenant_id[:8]}..." if settings.azure_tenant_id else "[STARTUP] Azure Tenant ID: NOT SET")
+print(f"[STARTUP] Azure Client ID: {settings.azure_client_id[:8]}..." if settings.azure_client_id else "[STARTUP] Azure Client ID: NOT SET")
+print(f"[STARTUP] Allowed Users: {settings.allowed_users[:30]}..." if settings.allowed_users else "[STARTUP] Allowed Users: NOT SET")
+print(f"[STARTUP] CORS Origins: {settings.cors_origins[:50]}..." if settings.cors_origins else "[STARTUP] CORS Origins: NOT SET")
+
 azure_scheme = SingleTenantAzureAuthorizationCodeBearer(
     app_client_id=settings.azure_client_id,
     tenant_id=settings.azure_tenant_id,
@@ -42,10 +48,12 @@ async def get_current_user(request: Request):
     # 2. Azure Entra ID Token (for React Users)
     try:
         from fastapi.security import SecurityScopes
+        print(f"[AUTH] Attempting Azure AD validation...")
         # Validates signature, audience, issuer, and expiration
         # Throws HTTPException if invalid
         # Fix: Must pass SecurityScopes when calling manually
         token_payload = await azure_scheme(request, SecurityScopes(scopes=[]))
+        print(f"[AUTH] Token validated successfully. Payload type: {type(token_payload)}")
         # Fix: token_payload can be a User object or dict. Use a safe helper.
         def get_val(obj, key):
             # Try dict access
@@ -60,7 +68,10 @@ async def get_current_user(request: Request):
         user_email = get_val(token_payload, "preferred_username") or get_val(token_payload, "upn") or get_val(token_payload, "email")
     except Exception as e:
         # Map Azure Auth errors to 401
-        print(f"Auth Error: {e}")
+        print(f"[AUTH ERROR] Type: {type(e).__name__}, Detail: {e}")
+        # If it's an HTTPException, check the status code
+        if hasattr(e, 'status_code'):
+            print(f"[AUTH ERROR] HTTP Status: {e.status_code}, Detail: {getattr(e, 'detail', 'N/A')}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
@@ -68,7 +79,7 @@ async def get_current_user(request: Request):
         )
 
     # Whitelist Check
-    allowed_users = ["caleb.lucas@myadvisor.co.nz", "mark.lucas@myadvisor.co.nz"]
+    allowed_users = settings.get_allowed_users_list()
     
     if not user_email:
         print("Auth Error: No email found in token payload")
@@ -88,10 +99,20 @@ async def get_current_user(request: Request):
 
 app = FastAPI(title="Meeting Intelligence API", version="1.0.0", swagger_ui_oauth2_redirect_url="/oauth2-redirect")
 
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    auth_header = request.headers.get("Authorization", "")
+    auth_preview = f"{auth_header[:20]}..." if len(auth_header) > 20 else auth_header
+    print(f"[REQUEST] {request.method} {request.url.path} | Auth: {auth_preview}")
+    response = await call_next(request)
+    print(f"[RESPONSE] {request.method} {request.url.path} -> {response.status_code}")
+    return response
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://claude.ai", "https://preview.claude.ai", "https://meeting-intelligence.gentlemoss-914366f8.australiaeast.azurecontainerapps.io"],
+    allow_origins=settings.get_cors_origins_list(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -117,9 +138,12 @@ async def list_meetings_endpoint(
     user: str = Depends(get_current_user)
 ):
     """List meetings with pagination."""
+    print(f"[ENDPOINT] /api/meetings called by user: {user}")
     result = meetings.list_meetings(limit=limit, days_back=days_back)
     if result.get("error"):
+        print(f"[ENDPOINT ERROR] /api/meetings: {result.get('code')} - {result.get('message')}")
         raise HTTPException(status_code=400, detail=result["message"])
+    print(f"[ENDPOINT] /api/meetings returned {result.get('count', 0)} meetings")
     return result
 
 

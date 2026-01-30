@@ -16,26 +16,10 @@ def run_http():
     """Run MCP server over SSE AND REST API via Uvicorn."""
     import uvicorn
     from mcp.server.sse import SseServerTransport
-    from starlette.middleware.cors import CORSMiddleware
-    
-    # Import the FastAPI app from api.py
+
+    # Import the FastAPI app from api.py (CORS configured there)
     from .api import app as fastapi_app
-    
-    # Ensure CORS is permissive for Claude.ai development
-    # Note: CORSMiddleware handles the OPTIONS preflight requests automatically
-    fastapi_app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173", 
-            "http://localhost:3000", 
-            "https://claude.ai", 
-            "https://preview.claude.ai"
-        ],
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],
-    )
-    
+
     import os
     import json
     from starlette.responses import Response

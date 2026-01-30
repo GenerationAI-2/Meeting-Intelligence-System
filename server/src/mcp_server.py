@@ -1,7 +1,7 @@
 """Meeting Intelligence MCP Server - Server Instance"""
 
 from mcp.server import Server
-from .tools import meetings, actions, decisions, fireflies
+from .tools import meetings, actions, decisions
 
 # Create MCP server instance to be shared
 mcp_server = Server("meeting-intelligence")
@@ -195,30 +195,6 @@ async def list_tools() -> list:
                 "required": ["meeting_id", "decision_text"]
             }
         ),
-        
-        # Fireflies Tools
-        Tool(
-            name="search_fireflies_transcripts",
-            description="Search for transcripts in Fireflies.ai. Does not store results - use import_fireflies_transcript to save.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search keyword"}
-                },
-                "required": ["query"]
-            }
-        ),
-        Tool(
-            name="import_fireflies_transcript",
-            description="Import a transcript from Fireflies into the database. Checks for duplicates before importing.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "transcript_id": {"type": "string", "description": "Fireflies transcript ID"}
-                },
-                "required": ["transcript_id"]
-            }
-        )
     ]
 
 @mcp_server.call_tool()
@@ -313,16 +289,7 @@ async def call_tool(name: str, arguments: dict) -> list:
                 user_email=user_email,
                 context=arguments.get("context")
             )
-        
-        # Fireflies Tools
-        elif name == "search_fireflies_transcripts":
-            result = await fireflies.search_fireflies_transcripts(arguments["query"])
-        elif name == "import_fireflies_transcript":
-            result = await fireflies.import_fireflies_transcript(
-                arguments["transcript_id"],
-                user_email
-            )
-        
+
         else:
             result = {"error": True, "code": "UNKNOWN_TOOL", "message": f"Unknown tool: {name}"}
         
