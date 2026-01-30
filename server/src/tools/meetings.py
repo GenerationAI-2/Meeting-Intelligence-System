@@ -5,13 +5,19 @@ from typing import Optional
 from ..database import get_db, row_to_dict, rows_to_list
 
 
-def list_meetings(limit: int = 20, days_back: int = 30) -> dict:
+def list_meetings(
+    limit: int = 20,
+    days_back: int = 30,
+    attendee: Optional[str] = None
+) -> dict:
     """
     List recent meetings, sorted by date descending (most recent first).
 
     Args:
         limit: Maximum results to return. Default 20, max 100.
         days_back: How far back to search in days. Default 30, min 1.
+        attendee: Optional. Filter by attendee email (partial match).
+                  Example: attendee="john@company.com" returns meetings John attended.
 
     Returns:
         {
@@ -28,17 +34,28 @@ def list_meetings(limit: int = 20, days_back: int = 30) -> dict:
         limit = 100
     if days_back < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "days_back must be at least 1"}
-    
+
     try:
         with get_db() as cursor:
-            cursor.execute("""
-                SELECT MeetingId, Title, MeetingDate, Attendees, Source
-                FROM Meeting
-                WHERE MeetingDate >= DATEADD(day, -?, GETUTCDATE())
-                ORDER BY MeetingDate DESC
-                OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
-            """, (days_back, limit))
-            
+            # Build query with optional attendee filter
+            if attendee:
+                cursor.execute("""
+                    SELECT MeetingId, Title, MeetingDate, Attendees, Source
+                    FROM Meeting
+                    WHERE MeetingDate >= DATEADD(day, -?, GETUTCDATE())
+                      AND Attendees LIKE ?
+                    ORDER BY MeetingDate DESC
+                    OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
+                """, (days_back, f"%{attendee}%", limit))
+            else:
+                cursor.execute("""
+                    SELECT MeetingId, Title, MeetingDate, Attendees, Source
+                    FROM Meeting
+                    WHERE MeetingDate >= DATEADD(day, -?, GETUTCDATE())
+                    ORDER BY MeetingDate DESC
+                    OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
+                """, (days_back, limit))
+
             rows = cursor.fetchall()
             meetings = []
             for row in rows:
@@ -49,7 +66,7 @@ def list_meetings(limit: int = 20, days_back: int = 30) -> dict:
                     "attendees": row[3],
                     "source": row[4]
                 })
-            
+
             return {"meetings": meetings, "count": len(meetings)}
     except Exception as e:
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
@@ -239,7 +256,8 @@ def update_meeting(
     user_email: str,
     title: Optional[str] = None,
     summary: Optional[str] = None,
-    attendees: Optional[str] = None
+    attendees: Optional[str] = None,
+    transcript: Optional[str] = None
 ) -> dict:
     """
     Update an existing meeting. Only provided fields are updated.
@@ -250,30 +268,35 @@ def update_meeting(
         title: Optional. New title. Max 255 characters. Plain text.
         summary: Optional. New/updated summary. Markdown supported. No limit.
         attendees: Optional. Updated attendee list. No limit.
+        transcript: Optional. Updated raw transcript. Plain text. No limit.
 
     Returns:
         Full updated meeting record (same format as get_meeting).
     """
     if not isinstance(meeting_id, int) or meeting_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "meeting_id must be a positive integer"}
-    
+
     # Build dynamic update
     updates = []
     params = []
-    
+
     if title is not None:
         if len(title.strip()) == 0:
             return {"error": True, "code": "VALIDATION_ERROR", "message": "Title cannot be empty"}
         updates.append("Title = ?")
         params.append(title)
-    
+
     if summary is not None:
         updates.append("Summary = ?")
         params.append(summary)
-    
+
     if attendees is not None:
         updates.append("Attendees = ?")
         params.append(attendees)
+
+    if transcript is not None:
+        updates.append("RawTranscript = ?")
+        params.append(transcript)
     
     if not updates:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "No fields to update"}

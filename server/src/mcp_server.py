@@ -17,12 +17,13 @@ async def list_tools() -> list:
         # Meeting Tools
         Tool(
             name="list_meetings",
-            description="List recent meetings. Returns id, title, date, attendees, source.",
+            description="List recent meetings. Returns id, title, date, attendees, source. Can filter by attendee email.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Maximum results (default 20, max 100)", "default": 20},
-                    "days_back": {"type": "integer", "description": "How far back to search (default 30)", "default": 30}
+                    "days_back": {"type": "integer", "description": "How far back to search (default 30)", "default": 30},
+                    "attendee": {"type": "string", "description": "Filter by attendee email (partial match)"}
                 }
             }
         ),
@@ -68,14 +69,15 @@ async def list_tools() -> list:
         ),
         Tool(
             name="update_meeting",
-            description="Update an existing meeting. Can update title, summary, or attendees.",
+            description="Update an existing meeting. Can update title, summary, attendees, or transcript.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "meeting_id": {"type": "integer", "description": "The meeting ID"},
                     "title": {"type": "string", "description": "New title"},
                     "summary": {"type": "string", "description": "New/updated summary"},
-                    "attendees": {"type": "string", "description": "Updated attendees"}
+                    "attendees": {"type": "string", "description": "Updated attendees"},
+                    "transcript": {"type": "string", "description": "Updated raw transcript"}
                 },
                 "required": ["meeting_id"]
             }
@@ -212,7 +214,8 @@ async def call_tool(name: str, arguments: dict) -> list:
         if name == "list_meetings":
             result = meetings.list_meetings(
                 limit=arguments.get("limit", 20),
-                days_back=arguments.get("days_back", 30)
+                days_back=arguments.get("days_back", 30),
+                attendee=arguments.get("attendee")
             )
         elif name == "get_meeting":
             result = meetings.get_meeting(arguments["meeting_id"])
@@ -238,7 +241,8 @@ async def call_tool(name: str, arguments: dict) -> list:
                 user_email=user_email,
                 title=arguments.get("title"),
                 summary=arguments.get("summary"),
-                attendees=arguments.get("attendees")
+                attendees=arguments.get("attendees"),
+                transcript=arguments.get("transcript")
             )
         
         # Action Tools
