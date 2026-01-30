@@ -12,16 +12,23 @@ def list_actions(
     limit: int = 50
 ) -> dict:
     """
-    List action items.
-    
+    List action items with optional filters.
+
     Args:
-        status: Filter by "Open", "Complete", "Parked" (default: Open only)
-        owner: Filter by owner name
-        meeting_id: Filter by source meeting
-        limit: Maximum results (default 50, max 200)
-    
+        status: Filter by status. Valid values: "Open", "Complete", "Parked".
+                Defaults to "Open" if not specified.
+        owner: Filter by owner (partial match, case-insensitive).
+        meeting_id: Filter by source meeting ID.
+        limit: Maximum results to return. Default 50, max 200.
+
     Returns:
-        Array of actions with: id, text, owner, due_date, status, meeting_id
+        {
+            "actions": [...],  # Array of action objects
+            "count": int       # Number of results returned
+        }
+
+        Each action contains: id, text, owner, due_date, status, meeting_id.
+        Actions are sorted by due_date (nulls last), then created_at.
     """
     # Validate inputs
     valid_statuses = ["Open", "Complete", "Parked"]
@@ -93,12 +100,23 @@ def list_actions(
 def get_action(action_id: int) -> dict:
     """
     Get full details of a specific action.
-    
+
     Args:
-        action_id: The action ID
-    
+        action_id: The action ID (positive integer).
+
     Returns:
-        Full action record including notes and timestamps
+        Full action record with fields:
+        - id: Action ID
+        - text: Action description
+        - owner: Person responsible
+        - due_date: ISO date string or null
+        - status: "Open", "Complete", or "Parked"
+        - meeting_id: Source meeting ID or null
+        - notes: Additional context or null
+        - created_at: ISO timestamp
+        - created_by: Email of creator
+        - updated_at: ISO timestamp
+        - updated_by: Email of last updater
     """
     if not isinstance(action_id, int) or action_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}
@@ -143,17 +161,19 @@ def create_action(
 ) -> dict:
     """
     Create a new action item.
-    
+
     Args:
-        action_text: What needs to be done
-        owner: Person responsible
-        user_email: Email of user creating the record
-        due_date: ISO date format (optional)
-        meeting_id: Link to source meeting (optional)
-        notes: Additional context (optional)
-    
+        action_text: Required. What needs to be done. Plain text, no limit.
+        owner: Required. Person responsible. Max 128 characters.
+               Use email format preferred (e.g., "john@company.com").
+        user_email: Required. Email of user creating the record (auto-set by system).
+        due_date: Optional. ISO 8601 date format (YYYY-MM-DD).
+        meeting_id: Optional. Link to source meeting. Must be valid meeting ID.
+        notes: Optional. Additional context. Plain text, no limit.
+
     Returns:
-        Created action with ID
+        Created action with: id, text, owner, due_date, status, message.
+        Status is set to "Open" on creation.
     """
     if not action_text or len(action_text.strip()) == 0:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "action_text is required"}
@@ -209,18 +229,20 @@ def update_action(
     notes: Optional[str] = None
 ) -> dict:
     """
-    Update an existing action.
-    
+    Update an existing action. Only provided fields are updated.
+
     Args:
-        action_id: The action ID
-        user_email: Email of user updating the record
-        action_text: Updated description (optional)
-        owner: New owner (optional)
-        due_date: New due date (optional)
-        notes: Updated notes (optional)
-    
+        action_id: Required. The action ID (positive integer).
+        user_email: Required. Email of user updating (auto-set by system).
+        action_text: Optional. Updated description. Plain text, no limit.
+        owner: Optional. New owner. Max 128 characters.
+        due_date: Optional. New due date. ISO 8601 format (YYYY-MM-DD).
+        notes: Optional. Updated notes. Plain text, no limit.
+
     Returns:
-        Updated action record
+        Full updated action record (same format as get_action).
+
+    Note: To change status, use complete_action or park_action instead.
     """
     if not isinstance(action_id, int) or action_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}
@@ -285,14 +307,14 @@ def update_action(
 
 def complete_action(action_id: int, user_email: str) -> dict:
     """
-    Mark an action as complete.
-    
+    Mark an action as complete. Sets status to "Complete".
+
     Args:
-        action_id: The action ID
-        user_email: Email of user completing the action
-    
+        action_id: Required. The action ID (positive integer).
+        user_email: Required. Email of user completing (auto-set by system).
+
     Returns:
-        Updated action with Status = "Complete"
+        Full updated action record with status = "Complete".
     """
     if not isinstance(action_id, int) or action_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}
@@ -317,14 +339,14 @@ def complete_action(action_id: int, user_email: str) -> dict:
 
 def park_action(action_id: int, user_email: str) -> dict:
     """
-    Park an action (put on hold).
-    
+    Park an action (put on hold). Sets status to "Parked".
+
     Args:
-        action_id: The action ID
-        user_email: Email of user parking the action
-    
+        action_id: Required. The action ID (positive integer).
+        user_email: Required. Email of user parking (auto-set by system).
+
     Returns:
-        Updated action with Status = "Parked"
+        Full updated action record with status = "Parked".
     """
     if not isinstance(action_id, int) or action_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}
@@ -349,13 +371,13 @@ def park_action(action_id: int, user_email: str) -> dict:
 
 def delete_action(action_id: int) -> dict:
     """
-    Permanently delete an action.
-    
+    Permanently delete an action. This cannot be undone.
+
     Args:
-        action_id: The action ID
-    
+        action_id: Required. The action ID (positive integer).
+
     Returns:
-        Confirmation message
+        {"message": "Action {id} deleted successfully", "deleted": true}
     """
     if not isinstance(action_id, int) or action_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}

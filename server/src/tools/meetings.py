@@ -7,14 +7,19 @@ from ..database import get_db, row_to_dict, rows_to_list
 
 def list_meetings(limit: int = 20, days_back: int = 30) -> dict:
     """
-    List recent meetings.
-    
+    List recent meetings, sorted by date descending (most recent first).
+
     Args:
-        limit: Maximum results (default 20, max 100)
-        days_back: How far back to search (default 30)
-    
+        limit: Maximum results to return. Default 20, max 100.
+        days_back: How far back to search in days. Default 30, min 1.
+
     Returns:
-        Array of meetings with: id, title, date, attendees, source
+        {
+            "meetings": [...],  # Array of meeting objects
+            "count": int        # Number of results returned
+        }
+
+        Each meeting contains: id, title, date, attendees, source.
     """
     # Validate inputs
     if limit < 1:
@@ -53,12 +58,24 @@ def list_meetings(limit: int = 20, days_back: int = 30) -> dict:
 def get_meeting(meeting_id: int) -> dict:
     """
     Get full details of a specific meeting.
-    
+
     Args:
-        meeting_id: The meeting ID
-    
+        meeting_id: Required. The meeting ID (positive integer).
+
     Returns:
-        Full meeting record including summary and transcript
+        Full meeting record with fields:
+        - id: Meeting ID
+        - title: Meeting title
+        - date: ISO timestamp of meeting date
+        - transcript: Raw transcript or null
+        - summary: Meeting summary (supports markdown) or null
+        - attendees: Comma-separated attendee list or null
+        - source: Source system (e.g., "Manual", "fireflies")
+        - source_meeting_id: External system ID or null
+        - created_at: ISO timestamp
+        - created_by: Email of creator
+        - updated_at: ISO timestamp
+        - updated_by: Email of last updater
     """
     if not isinstance(meeting_id, int) or meeting_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "meeting_id must be a positive integer"}
@@ -97,14 +114,20 @@ def get_meeting(meeting_id: int) -> dict:
 
 def search_meetings(query: str, limit: int = 10) -> dict:
     """
-    Search meetings by keyword.
-    
+    Search meetings by keyword in title or transcript.
+
     Args:
-        query: Search terms (min 2 chars)
-        limit: Maximum results (default 10, max 50)
-    
+        query: Required. Search terms. Min 2 characters.
+               Searches in both title and transcript fields.
+        limit: Maximum results to return. Default 10, max 50.
+
     Returns:
-        Array of matching meetings with snippet showing match context
+        {
+            "results": [...],  # Array of matching meetings
+            "count": int       # Number of results returned
+        }
+
+        Each result contains: id, title, date, snippet (context around match).
     """
     if not query or len(query) < 2:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Query must be at least 2 characters"}
@@ -159,19 +182,20 @@ def create_meeting(
 ) -> dict:
     """
     Create a new meeting record.
-    
+
     Args:
-        title: Meeting title
-        meeting_date: ISO date format
-        user_email: Email of user creating the record
-        attendees: Comma-separated names (optional)
-        summary: Meeting summary (optional)
-        transcript: Raw transcript (optional)
-        source: Source system (default "Manual")
-        source_meeting_id: External ID (optional)
-    
+        title: Required. Meeting title. Max 255 characters. Plain text.
+        meeting_date: Required. ISO 8601 format (YYYY-MM-DD or full datetime).
+        user_email: Required. Email of user creating (auto-set by system).
+        attendees: Optional. Comma-separated attendee list. No limit.
+                   Example: "john@company.com, jane@company.com"
+        summary: Optional. Meeting summary. Markdown supported. No limit.
+        transcript: Optional. Raw transcript. Plain text. No limit.
+        source: Optional. Source system. Max 50 characters. Default "Manual".
+        source_meeting_id: Optional. External system ID. Max 255 characters.
+
     Returns:
-        Created meeting with ID
+        Created meeting with: id, title, date, source, message.
     """
     if not title or len(title.strip()) == 0:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Title is required"}
@@ -218,17 +242,17 @@ def update_meeting(
     attendees: Optional[str] = None
 ) -> dict:
     """
-    Update an existing meeting.
-    
+    Update an existing meeting. Only provided fields are updated.
+
     Args:
-        meeting_id: The meeting ID
-        user_email: Email of user updating the record
-        title: New title (optional)
-        summary: New/updated summary (optional)
-        attendees: Updated attendees (optional)
-    
+        meeting_id: Required. The meeting ID (positive integer).
+        user_email: Required. Email of user updating (auto-set by system).
+        title: Optional. New title. Max 255 characters. Plain text.
+        summary: Optional. New/updated summary. Markdown supported. No limit.
+        attendees: Optional. Updated attendee list. No limit.
+
     Returns:
-        Updated meeting record
+        Full updated meeting record (same format as get_meeting).
     """
     if not isinstance(meeting_id, int) or meeting_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "meeting_id must be a positive integer"}

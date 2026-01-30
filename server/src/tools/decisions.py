@@ -10,14 +10,19 @@ def list_decisions(
     limit: int = 50
 ) -> dict:
     """
-    List decisions from meetings.
-    
+    List decisions from meetings, sorted by most recent first.
+
     Args:
-        meeting_id: Filter by source meeting (optional)
-        limit: Maximum results (default 50, max 200)
-    
+        meeting_id: Optional. Filter by source meeting ID.
+        limit: Maximum results to return. Default 50, max 200.
+
     Returns:
-        Array of decisions with: id, text, context, meeting_id, meeting_title, created_at
+        {
+            "decisions": [...],  # Array of decision objects
+            "count": int         # Number of results returned
+        }
+
+        Each decision contains: id, text, context, meeting_id, meeting_title, created_at.
     """
     if limit < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Limit must be at least 1"}
@@ -71,10 +76,17 @@ def get_decision(decision_id: int) -> dict:
     Get full details of a specific decision.
 
     Args:
-        decision_id: The decision ID
+        decision_id: Required. The decision ID (positive integer).
 
     Returns:
-        Full decision record including context and timestamps
+        Full decision record with fields:
+        - id: Decision ID
+        - text: The decision text
+        - context: Background/reasoning or null
+        - meeting_id: Source meeting ID
+        - meeting_title: Title of source meeting
+        - created_at: ISO timestamp
+        - created_by: Email of creator
     """
     if not isinstance(decision_id, int) or decision_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "decision_id must be a positive integer"}
@@ -113,16 +125,18 @@ def create_decision(
     context: Optional[str] = None
 ) -> dict:
     """
-    Record a decision.
-    
+    Record a decision made in a meeting.
+
     Args:
-        meeting_id: The meeting where decision was made
-        decision_text: The decision
-        user_email: Email of user creating the record
-        context: Background/reasoning (optional)
-    
+        meeting_id: Required. The meeting where decision was made.
+                    Must be a valid meeting ID from list_meetings.
+        decision_text: Required. The decision. Plain text, no limit.
+        user_email: Required. Email of user creating (auto-set by system).
+        context: Optional. Background/reasoning for the decision.
+                 Plain text, no limit.
+
     Returns:
-        Created decision with ID
+        Created decision with: id, text, context, meeting_id, meeting_title, message.
     """
     if not isinstance(meeting_id, int) or meeting_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "meeting_id must be a positive integer"}
