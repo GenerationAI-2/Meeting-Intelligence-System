@@ -49,8 +49,13 @@ case "$ENV" in
         APP_NAME="meeting-intelligence-dev"
         DB_NAME="meeting-intelligence-dev"
         ;;
+    team)
+        RG="meeting-intelligence-team-rg"
+        APP_NAME="meeting-intelligence-team"
+        DB_NAME="meeting-intelligence-team"
+        ;;
     *)
-        echo "Usage: ./deploy.sh [dev|prod]"
+        echo "Usage: ./deploy.sh [dev|prod|team]"
         exit 1
         ;;
 esac

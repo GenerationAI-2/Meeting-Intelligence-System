@@ -1,12 +1,18 @@
-import { useMsal } from '@azure/msal-react';
+import { useMsal, useIsAuthenticated } from '@azure/msal-react';
+import { Navigate } from 'react-router-dom';
 import { loginRequest } from '../authConfig';
 
 function Login() {
     const { instance } = useMsal();
+    const isAuthenticated = useIsAuthenticated();
 
     const handleLogin = () => {
         instance.loginRedirect(loginRequest);
     };
+
+    if (isAuthenticated) {
+        return <Navigate to="/meetings" replace />;
+    }
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-brand-50 to-brand-100">
