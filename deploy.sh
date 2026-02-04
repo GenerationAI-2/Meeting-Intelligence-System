@@ -7,23 +7,6 @@ set -e
 
 ENV="${1:-dev}"
 
-# =============================================================================
-# PHASE 2 RESTRICTION: Prod deployment blocked
-# Remove this block after Phase 2 is complete and approved.
-# =============================================================================
-if [ "$ENV" == "prod" ]; then
-    echo "=============================================="
-    echo "BLOCKED: Prod deployment disabled"
-    echo "=============================================="
-    echo "Phase 2 work targets DEV only."
-    echo "Current prod must remain untouched until sign-off."
-    echo ""
-    echo "To deploy to dev:  ./deploy.sh dev"
-    echo "To remove block:   Edit deploy.sh after Phase 2 approval"
-    echo "=============================================="
-    exit 1
-fi
-
 # Load local secrets if available (gitignored)
 if [ -f .env.deploy ]; then
     echo "Loading secrets from .env.deploy..."

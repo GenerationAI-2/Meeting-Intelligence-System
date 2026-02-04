@@ -173,3 +173,32 @@ def create_decision(
             }
     except Exception as e:
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+
+
+def delete_decision(decision_id: int) -> dict:
+    """
+    Permanently delete a decision.
+
+    Args:
+        decision_id: Required. The decision ID (positive integer).
+
+    Returns:
+        {"success": True, "message": "Decision deleted"} on success.
+
+    Warning: This cannot be undone.
+    """
+    if not isinstance(decision_id, int) or decision_id < 1:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "decision_id must be a positive integer"}
+
+    try:
+        with get_db() as cursor:
+            # Check exists
+            cursor.execute("SELECT DecisionId FROM Decision WHERE DecisionId = ?", (decision_id,))
+            if not cursor.fetchone():
+                return {"error": True, "code": "NOT_FOUND", "message": f"Decision with ID {decision_id} not found"}
+
+            cursor.execute("DELETE FROM Decision WHERE DecisionId = ?", (decision_id,))
+
+            return {"success": True, "message": f"Decision {decision_id} deleted"}
+    except Exception as e:
+        return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}

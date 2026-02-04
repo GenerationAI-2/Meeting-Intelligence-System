@@ -346,3 +346,38 @@ def update_meeting(
         return get_meeting(meeting_id)
     except Exception as e:
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+
+
+def delete_meeting(meeting_id: int) -> dict:
+    """
+    Permanently delete a meeting and all associated actions and decisions.
+
+    Args:
+        meeting_id: Required. The meeting ID (positive integer).
+
+    Returns:
+        {"success": True, "message": "Meeting deleted"} on success.
+
+    Warning: This cannot be undone. All linked actions and decisions will also be deleted.
+    """
+    if not isinstance(meeting_id, int) or meeting_id < 1:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "meeting_id must be a positive integer"}
+
+    try:
+        with get_db() as cursor:
+            # Check exists
+            cursor.execute("SELECT MeetingId, Title FROM Meeting WHERE MeetingId = ?", (meeting_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"error": True, "code": "NOT_FOUND", "message": f"Meeting with ID {meeting_id} not found"}
+
+            title = row[1]
+
+            # Delete in order due to foreign keys
+            cursor.execute("DELETE FROM Decision WHERE MeetingId = ?", (meeting_id,))
+            cursor.execute("DELETE FROM Action WHERE MeetingId = ?", (meeting_id,))
+            cursor.execute("DELETE FROM Meeting WHERE MeetingId = ?", (meeting_id,))
+
+            return {"success": True, "message": f"Meeting '{title}' (ID {meeting_id}) deleted"}
+    except Exception as e:
+        return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}

@@ -85,7 +85,18 @@ async def list_tools() -> list:
                 "required": ["meeting_id"]
             }
         ),
-        
+        Tool(
+            name="delete_meeting",
+            description="Permanently delete a meeting and all its linked actions and decisions. Cannot be undone. Confirm with user before calling.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "meeting_id": {"type": "integer", "description": "The meeting ID"}
+                },
+                "required": ["meeting_id"]
+            }
+        ),
+
         # Action Tools
         Tool(
             name="list_actions",
@@ -200,6 +211,17 @@ async def list_tools() -> list:
                 "required": ["meeting_id", "decision_text"]
             }
         ),
+        Tool(
+            name="delete_decision",
+            description="Permanently delete a decision. Cannot be undone. Confirm with user before calling.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {"type": "integer", "description": "The decision ID"}
+                },
+                "required": ["decision_id"]
+            }
+        ),
     ]
 
 @mcp_server.call_tool()
@@ -250,7 +272,9 @@ async def call_tool(name: str, arguments: dict) -> list:
                 transcript=arguments.get("transcript"),
                 tags=arguments.get("tags")
             )
-        
+        elif name == "delete_meeting":
+            result = meetings.delete_meeting(arguments["meeting_id"])
+
         # Action Tools
         elif name == "list_actions":
             result = actions.list_actions(
@@ -299,6 +323,8 @@ async def call_tool(name: str, arguments: dict) -> list:
                 user_email=user_email,
                 context=arguments.get("context")
             )
+        elif name == "delete_decision":
+            result = decisions.delete_decision(arguments["decision_id"])
 
         else:
             result = {"error": True, "code": "UNKNOWN_TOOL", "message": f"Unknown tool: {name}"}
