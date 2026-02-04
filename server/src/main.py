@@ -2,173 +2,143 @@
 
 import sys
 import asyncio
-from mcp.server.stdio import stdio_server
-from .mcp_server import mcp_server
+import contextlib
+from .mcp_server import mcp
 
 
 async def run_stdio():
     """Run MCP server over stdio (for local/Claude Desktop)."""
-    async with stdio_server() as (read_stream, write_stream):
-        await mcp_server.run(read_stream, write_stream, mcp_server.create_initialization_options())
+    await mcp.run(transport="stdio")
 
 
 def run_http():
-    """Run MCP server over SSE AND REST API via Uvicorn."""
+    """Run MCP server over SSE + Streamable HTTP + REST API."""
     import uvicorn
-    from mcp.server.sse import SseServerTransport
-
-    # Import the FastAPI app from api.py (CORS configured there)
-    from .api import app as fastapi_app
-
     import os
-    import json
-    from starlette.responses import Response
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse, Response
+    from starlette.middleware.cors import CORSMiddleware
+
+    from .api import app as api_app  # REST API endpoints
     from .config import get_settings
 
     settings = get_settings()
     valid_tokens = settings.get_valid_mcp_tokens()
 
-    print(f"DEBUG: Initializing with {len(valid_tokens)} MCP token(s) configured")
+    # Create MCP transport apps first (this creates the session manager)
+    streamable_http_app = mcp.streamable_http_app()
+    sse_app = mcp.sse_app()
 
-    # Build endpoint paths for each token (for path-based auth on POST)
-    token_endpoints = {f"/messages/token/{token}": token for token in valid_tokens}
+    # Lifespan for MCP session management
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        async with mcp.session_manager.run():
+            yield
 
-    # We need one SSE transport per token endpoint for the POST routing
-    # But for SSE connection, we use a single /sse endpoint and validate via query param
-    # The SSE transport needs to know where to send POST messages - we'll use a dynamic approach
-    sse_transports = {}
-    for token in valid_tokens:
-        endpoint = f"/messages/token/{token}"
-        sse_transports[token] = SseServerTransport(endpoint)
+    # Create main app with lifespan
+    app = FastAPI(title="Meeting Intelligence", lifespan=lifespan)
 
-    # Fallback for no tokens configured
-    if not valid_tokens:
-        sse_transports["default"] = SseServerTransport("/messages")
+    # CORS - include mcp-session-id header
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.get_cors_origins_list(),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS", "PATCH"],
+        allow_headers=["*", "mcp-protocol-version", "mcp-session-id", "Authorization", "X-API-Key"],
+        expose_headers=["mcp-session-id"],
+    )
 
-    def get_token_from_request(request):
-        """Extract token from header, query param, or path."""
-        # 1. Check Authorization Header
-        auth_header = request.headers.get("authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            return auth_header.split(" ")[1]
-
-        # 2. Check Query Parameter
-        token = request.query_params.get("token") or request.query_params.get("access_token")
-        if token:
-            return token
-
-        # 3. Check Path
+    # Token auth middleware for MCP endpoints
+    # Uses raw ASGI middleware to support path rewriting for Copilot
+    @app.middleware("http")
+    async def mcp_auth_middleware(request, call_next):
         path = request.url.path
-        if path in token_endpoints:
-            return token_endpoints[path]
 
-        return None
+        # Only check auth for MCP endpoints
+        if not (path.startswith("/sse") or path.startswith("/mcp")):
+            return await call_next(request)
 
-    async def verify_mcp_token(request):
+        # Skip auth if no tokens configured
         if not valid_tokens:
-            return None  # Auth disabled if no tokens configured
+            return await call_next(request)
 
-        token = get_token_from_request(request)
-        if token and token in valid_tokens:
-            return None
+        token = None
 
-        return Response("Unauthorized: Missing or Invalid Token", status_code=401)
+        # Check for path-based token: /mcp/{token} (for Copilot)
+        if path.startswith("/mcp/") and len(path) > 5:
+            path_token = path[5:]  # Extract token from path
+            if path_token in valid_tokens:
+                token = path_token
+                # Rewrite path to /mcp for the route handler
+                request.scope["path"] = "/mcp"
 
-    async def handle_sse(request):
-        # Verify Auth
-        auth_error = await verify_mcp_token(request)
-        if auth_error:
-            return auth_error
+        # Check token in query param
+        if not token:
+            token = request.query_params.get("token")
 
-        # Get the appropriate transport for this user's token
-        token = get_token_from_request(request)
-        sse = sse_transports.get(token) or sse_transports.get("default")
+        # Check X-API-Key header
+        if not token:
+            token = request.headers.get("X-API-Key")
 
-        # Establish SSE connection
-        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-            await mcp_server.run(streams[0], streams[1], mcp_server.create_initialization_options())
+        # Check Authorization header
+        if not token:
+            auth = request.headers.get("Authorization", "")
+            if auth.startswith("Bearer "):
+                token = auth[7:]
 
-    async def handle_messages(request, token: str):
-        # Verify Auth
-        auth_error = await verify_mcp_token(request)
-        if auth_error:
-            return auth_error
+        if token not in valid_tokens:
+            return Response("Unauthorized", status_code=401)
 
-        # Get the appropriate transport for this token
-        sse = sse_transports.get(token) or sse_transports.get("default")
+        return await call_next(request)
 
-        # Handle client messages (POST)
-        await sse.handle_post_message(request.scope, request.receive, request._send)
+    # Mount MCP transports
+    # FastMCP apps have their own routes (/mcp for HTTP, /sse+/messages for SSE)
+    # Include routes from both apps directly
+    for route in streamable_http_app.routes:
+        app.routes.append(route)
+    for route in sse_app.routes:
+        app.routes.append(route)
 
-    # Add routes to the FastAPI app
-    fastapi_app.add_route("/sse", handle_sse, methods=["GET"])
+    # Mount REST API - api_app routes are /api/*, so include directly
+    # Since api_app already has /api prefix, we add its routes to main app
+    for route in api_app.routes:
+        app.routes.append(route)
 
-    # Register POST routes for each token endpoint
-    for token in valid_tokens:
-        endpoint = f"/messages/token/{token}"
-        # Create a closure to capture the token value
-        def make_handler(t):
-            async def handler(request):
-                return await handle_messages(request, t)
-            return handler
-        fastapi_app.add_route(endpoint, make_handler(token), methods=["POST"])
+    # Health check (defined after route appends to ensure proper ordering)
+    @app.get("/health")
+    def health():
+        return {"status": "healthy", "transports": ["sse", "streamable-http"]}
 
-    # Fallback route if no tokens configured
-    if not valid_tokens:
-        async def handle_messages_default(request):
-            return await handle_messages(request, "default")
-        fastapi_app.add_route("/messages", handle_messages_default, methods=["POST"])
-
-    print("Starting Meeting Intelligence Server (HTTP/SSE + REST)...")
-    print("MCP SSE Endpoint: http://localhost:8000/sse")
-    print("Web UI API: http://localhost:8000/api/...")
-    
-    from fastapi.staticfiles import StaticFiles
-    from starlette.responses import FileResponse
-    import os
-
-    # 1. Mount assets (CSS/JS)
-    # Check if static directory exists (it will in Docker)
+    # Static files for web UI
     static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
-    print(f"DEBUG: static_dir is {static_dir}, exists={os.path.exists(static_dir)}")
-    
     if os.path.exists(static_dir):
-        fastapi_app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+        app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 
-        async def serve_index():
-            index_path = os.path.join(static_dir, "index.html")
-            if os.path.exists(index_path):
-                return FileResponse(index_path)
-            return Response("Frontend not found (index.html missing)", status_code=404)
-
-        # 2. explicit root route
-        @fastapi_app.get("/")
+        @app.get("/")
         async def serve_root():
-            return await serve_index()
+            return FileResponse(os.path.join(static_dir, "index.html"))
 
-        # 3. SPA Catch-all (Serve index.html for non-API routes)
-        @fastapi_app.get("/{full_path:path}")
-        async def serve_spa(full_path: str):
-            # Allow API and SSE routes to pass through (handled by previous add_route/add_api_route)
-            if full_path.startswith("api/") or full_path.startswith("sse") or full_path.startswith("messages"):
-                # If we got here, it means no specific route matched for API, let it 404 naturally?
-                # Actually, catch-all catches EVERYTHING that wasn't matched before.
-                # If api/ endpoints are defined BEFORE this, they are matched first.
-                # But if we access /api/foobar (undefined), it falls here?
-                # Yes. We should 404.
-                return Response("Not Found", status_code=404)
-            
-            return await serve_index()
-    
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
+        # SPA catch-all - must be defined LAST
+        @app.get("/{path:path}")
+        async def serve_spa(_path: str):
+            # Let API, MCP, and health routes pass through (they should be matched first)
+            return FileResponse(os.path.join(static_dir, "index.html"))
+
+    print("Starting Meeting Intelligence Server...")
+    print("  Streamable HTTP: http://localhost:8000/mcp (Copilot)")
+    print("  SSE:             http://localhost:8000/sse (Claude Desktop)")
+    print("  REST API:        http://localhost:8000/api/...")
+    print("  Web UI:          http://localhost:8000/")
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
 def main():
-    """Entry point detecting mode."""
     if "--http" in sys.argv:
         run_http()
     else:
-         asyncio.run(run_stdio())
+        asyncio.run(run_stdio())
 
 
 if __name__ == "__main__":

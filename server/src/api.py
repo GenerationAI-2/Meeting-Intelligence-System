@@ -1,19 +1,14 @@
-"""Meeting Intelligence - REST API (Web UI) + MCP SSE Endpoint (Claude)"""
+"""Meeting Intelligence - REST API (Web UI)"""
 
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from mcp.server.sse import SseServerTransport
 from starlette.responses import Response
 
 from .database import get_db
 from .tools import meetings, actions, decisions
-from .mcp_server import mcp_server
-from fastapi import Depends, Header, status
-
-import jwt
 from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
 from .config import get_settings
 

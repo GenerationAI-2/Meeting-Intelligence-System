@@ -236,6 +236,7 @@ If you don't have access to Second Brain folder:
 | Skill | Absolute Path | Last Synced |
 |-------|---------------|-------------|
 | azure-container-apps | `/Users/caleblucas/Second Brain/Project Management/Skills/azure-container-apps/SKILL.md` | 2026-02-04 |
+| mcp-copilot-integration | `/Users/caleblucas/Second Brain/Project Management/Skills/mcp-copilot-integration/SKILL.md` | 2026-02-04 |
 
 ---
 
