@@ -1,7 +1,7 @@
 # Meeting Intelligence System - Agent Context
 
 **Last Updated:** 2026-02-04
-**Project Status:** SHIP
+**Project Status:** BUILD
 **Owner:** Caleb Lucas
 
 ---
@@ -107,8 +107,11 @@ web/src/
 - Transcript storage and search
 - Three environments: dev, team, prod
 
-**What's in progress:**
-- Nothing currently
+**What's in progress (Phase 2 Days 6-10):**
+- Governance docs (admin, security, audit, onboarding)
+- Multi-platform testing (ChatGPT, Copilot MCP integration)
+- Productisation docs (system overview, user guide, deployment)
+- Mark sign-off
 
 **Known issues:**
 - Cold start delay (2-5 sec) when apps scale from 0
