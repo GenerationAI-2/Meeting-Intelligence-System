@@ -168,31 +168,44 @@ When working in this codebase:
 
 ## Second Brain Sync
 
-This repo is linked to a project folder in Second Brain. **Keep them in sync.**
+This repo is linked to a project folder in Second Brain. **ALWAYS update both locations together.**
 
-**Second Brain path:** `Second Brain/Project Management/Projects/GenerationAI - Meeting Intelligence System/`
+### Absolute Paths
+
+| Location | Absolute Path |
+|----------|---------------|
+| Project folder | `/Users/caleblucas/Second Brain/Project Management/Projects/GenerationAI - Meeting Intelligence System/` |
+| Skills folder | `/Users/caleblucas/Second Brain/Project Management/Skills/` |
+| CHANGELOG | `/Users/caleblucas/Second Brain/Project Management/CHANGELOG.md` |
+
+### Files That Must Stay In Sync
+
+When project status changes, update ALL of these together:
+1. **This file** (`CLAUDE.md`) — Project Status field and Current State section
+2. **`_status.md`** — Stage field and Current State section
+3. **`mi-sprint-execution.md`** — Day status and Definition of Done
 
 ### What to Update in Second Brain
 
-| When | Update |
-|------|--------|
-| Repo created / moved | `_repo-link.md` in project folder |
-| Major milestone reached | `_status.md` — Current State section |
-| Key decision made | `2-build/mi-decisions.md` |
-| Learned reusable pattern | `Skills/[skill-name]/SKILL.md` |
-| Session ends | `CHANGELOG.md` (if significant work done) |
+| When | Update | Full Path |
+|------|--------|-----------|
+| Repo created / moved | `_repo-link.md` | `.../GenerationAI - Meeting Intelligence System/_repo-link.md` |
+| Status/milestone change | `_status.md` | `.../GenerationAI - Meeting Intelligence System/_status.md` |
+| Key decision made | `mi-decisions.md` | `.../GenerationAI - Meeting Intelligence System/2-build/mi-decisions.md` |
+| Learned reusable pattern | Skill file | `/Users/caleblucas/Second Brain/Project Management/Skills/[skill-name]/SKILL.md` |
+| Session ends | CHANGELOG | `/Users/caleblucas/Second Brain/Project Management/CHANGELOG.md` |
 
 ### How to Update
 
-If you have access to Second Brain folder:
-1. Navigate to the project folder path above
-2. Update the relevant file directly
+1. Navigate to the absolute path listed above
+2. Update the file directly
+3. Verify the change was saved
 
-If you don't have access:
+If you don't have access to Second Brain folder:
 1. Note the update needed at the end of your response
 2. Format: `📝 Second Brain update needed: [what to update]`
 
-**Don't let the two get out of sync.** If CLAUDE.md says "in progress" but _status.md says "shipped", someone will get confused.
+**MANDATORY:** Never leave these files out of sync. If CLAUDE.md says "BUILD" but _status.md says "SHIP", that's a bug.
 
 ---
 
@@ -220,9 +233,9 @@ If you don't have access:
 
 ## Skills Used
 
-| Skill | Path | Last Synced |
-|-------|------|-------------|
-| azure-container-apps | `Second Brain/Project Management/Skills/azure-container-apps/SKILL.md` | 2026-02-04 |
+| Skill | Absolute Path | Last Synced |
+|-------|---------------|-------------|
+| azure-container-apps | `/Users/caleblucas/Second Brain/Project Management/Skills/azure-container-apps/SKILL.md` | 2026-02-04 |
 
 ---
 
@@ -236,24 +249,37 @@ If you don't have access:
 
 ---
 
-## Session End — Skill Sync
+## Session End Checklist
 
-Before ending any session, ask:
+**BEFORE ending any session, CHECK and UPDATE these files:**
 
-1. **Did I learn a reusable pattern?** → Update the relevant skill in Second Brain
-2. **Did I find a better way to do something the skill describes?** → Update the skill
-3. **Did I discover API/tool behaviour that differs from docs?** → Add to skill
-4. **Is there a new pattern worth capturing?** → Create new skill using `Templates/skill-template.md`
-5. **Did I find something that differs from expectations?** → Add to "What's Been Tried & Failed"
-6. **Did I add technical debt?** → Add to Technical Debt section
-7. **Did I change the architecture or add features?** → Update this file
+### Mandatory Updates
 
-**Update the skill in Second Brain, not here.** This file references skills; it doesn't duplicate them.
+1. **CHANGELOG** (`/Users/caleblucas/Second Brain/Project Management/CHANGELOG.md`)
+   - Add session entry if significant work was done
+   - Use format: `## [Date] (Session N — [Topic])`
 
-**Triggers that should prompt skill updates:**
-- "This worked better than expected"
-- "I wouldn't do it that way again"
-- "This pattern would work for other projects"
+2. **Status sync** — If project status changed:
+   - `CLAUDE.md` (this file)
+   - `_status.md` in Second Brain
+   - `mi-sprint-execution.md` if sprint-related
+
+### Skill Updates (if applicable)
+
+Check these triggers:
+- "This worked better than expected" → Update relevant skill
+- "I wouldn't do it that way again" → Add to skill's gotchas
+- "This pattern would work for other projects" → Create new skill
+
+Where to update:
+- Skills live at `/Users/caleblucas/Second Brain/Project Management/Skills/[skill-name]/SKILL.md`
+- New skills use template at `Templates/skill-template.md`
+
+### This File Updates (if applicable)
+
+- Learned something that failed? → Add to "What's Been Tried & Failed"
+- Added technical debt? → Add to Technical Debt section
+- Changed architecture or features? → Update relevant sections
 
 ---
 
