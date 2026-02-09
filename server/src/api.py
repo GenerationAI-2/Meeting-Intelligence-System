@@ -1,5 +1,6 @@
 """Meeting Intelligence - REST API (Web UI)"""
 
+import hashlib
 from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, status
@@ -7,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 from .schemas import StatusUpdate
 
-from .database import get_db
+from .database import get_db, validate_client_token
 from .tools import meetings, actions, decisions
 from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
 from .config import get_settings
@@ -39,10 +40,11 @@ async def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
-        # Look up user from token mapping
-        mcp_user = settings.get_mcp_user(token)
-        if mcp_user:
-            return mcp_user
+        # Look up user from database-backed token store
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        result = validate_client_token(token_hash)
+        if result and not result.get("error"):
+            return result["client_email"]
 
     # 2. Azure Entra ID Token (for React Users)
     try:

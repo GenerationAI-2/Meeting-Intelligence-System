@@ -1,8 +1,10 @@
 """Meeting Intelligence MCP Server - Entry Point"""
 
+import hashlib
 import sys
 import asyncio
 import contextlib
+import time as _time
 
 from .logging_config import configure_logging, get_logger
 from .mcp_server import mcp
@@ -31,10 +33,40 @@ def run_http():
 
     from .api import app as api_app  # REST API endpoints
     from .config import get_settings
-    from .oauth import router as oauth_router, validate_oauth_token
+    from .database import validate_client_token
+    from .oauth import router as oauth_router, validate_oauth_token, init_oauth_clients
 
     settings = get_settings()
-    valid_tokens = settings.get_valid_mcp_tokens()
+
+    # In-memory token cache — avoids DB hit on every MCP request
+    # Trade-off: revoked tokens may still work for up to TOKEN_CACHE_TTL seconds
+    _token_cache: dict[str, dict] = {}  # {hash: {"email": str, "expires_cache": float}}
+    TOKEN_CACHE_TTL = 300  # 5 minutes
+
+    def validate_mcp_token(token: str) -> str | None:
+        """Validate MCP token. Returns client email if valid, None if not.
+
+        Uses in-memory cache with 5-minute TTL to reduce DB load.
+        """
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        # Check cache first
+        cached = _token_cache.get(token_hash)
+        if cached and cached["expires_cache"] > _time.time():
+            return cached["email"]
+
+        # Cache miss — check database
+        result = validate_client_token(token_hash)
+        if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
+            _token_cache[token_hash] = {
+                "email": result["client_email"],
+                "expires_cache": _time.time() + TOKEN_CACHE_TTL,
+            }
+            return result["client_email"]
+
+        # Invalid — remove from cache if present
+        _token_cache.pop(token_hash, None)
+        return None
 
     # Create MCP transport apps first (this creates the session manager)
     streamable_http_app = mcp.streamable_http_app()
@@ -43,6 +75,8 @@ def run_http():
     # Lifespan for MCP session management
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # Load OAuth clients from database into memory on startup
+        init_oauth_clients()
         async with mcp.session_manager.run():
             yield
 
@@ -79,7 +113,7 @@ def run_http():
     )
 
     # Token auth middleware for MCP endpoints
-    # Uses raw ASGI middleware to support path rewriting for Copilot
+    # Uses DB-backed token validation with in-memory cache (5-min TTL)
     @app.middleware("http")
     async def mcp_auth_middleware(request, call_next):
         path = request.url.path
@@ -88,16 +122,12 @@ def run_http():
         if not (path.startswith("/sse") or path.startswith("/mcp")):
             return await call_next(request)
 
-        # Skip auth if no tokens configured
-        if not valid_tokens:
-            return await call_next(request)
-
         token = None
 
         # Check for path-based token: /mcp/{token} (for Copilot)
         if path.startswith("/mcp/") and len(path) > 5:
             path_token = path[5:]  # Extract token from path
-            if path_token in valid_tokens:
+            if validate_mcp_token(path_token):
                 token = path_token
                 # Rewrite path to /mcp for the route handler
                 request.scope["path"] = "/mcp"
@@ -115,8 +145,8 @@ def run_http():
             auth = request.headers.get("Authorization", "")
             if auth.startswith("Bearer "):
                 bearer_token = auth[7:]
-                # First check if it's an MCP static token
-                if bearer_token in valid_tokens:
+                # First check if it's an MCP client token
+                if validate_mcp_token(bearer_token):
                     token = bearer_token
                 else:
                     # Try validating as OAuth token (for ChatGPT)
@@ -125,7 +155,7 @@ def run_http():
                         # Valid OAuth token - allow request
                         return await call_next(request)
 
-        if token not in valid_tokens:
+        if not token or not validate_mcp_token(token):
             return Response("Unauthorized", status_code=401)
 
         return await call_next(request)

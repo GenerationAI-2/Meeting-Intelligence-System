@@ -5,10 +5,11 @@ Implements:
 - Authorization Code Flow with PKCE (RFC 7636)
 - Well-known metadata endpoints (RFC 8414)
 
-This is an MVP in-memory implementation. For production, store clients and
-auth codes in a database.
+Client registrations are persisted to database and cached in-memory.
+Authorization codes and access tokens remain in-memory (short-lived).
 """
 
+import logging
 import secrets
 import hashlib
 import base64
@@ -22,13 +23,41 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
 
 from .config import get_settings
+from .database import save_oauth_client, load_all_oauth_clients
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# In-memory storage (MVP - lost on restart)
-# For production, use database tables
-registered_clients: dict[str, dict] = {}
+# In-memory cache for OAuth clients (loaded from DB on startup, updated on register)
+_oauth_clients_cache: dict[str, dict] = {}
+
+# Authorization codes stay in-memory (short-lived, lost on restart is fine)
 pending_auth_codes: dict[str, dict] = {}
+
+
+def init_oauth_clients():
+    """Load OAuth clients from database into memory cache. Call on app startup."""
+    global _oauth_clients_cache
+    try:
+        result = load_all_oauth_clients()
+        if isinstance(result, dict) and not result.get("error"):
+            _oauth_clients_cache = result
+            logger.info("Loaded %d OAuth clients from database", len(_oauth_clients_cache))
+        elif isinstance(result, dict) and result.get("error"):
+            logger.warning("Failed to load OAuth clients from database: %s", result.get("message"))
+            _oauth_clients_cache = {}
+        else:
+            _oauth_clients_cache = result or {}
+            logger.info("Loaded %d OAuth clients from database", len(_oauth_clients_cache))
+    except Exception as e:
+        logger.warning("Could not load OAuth clients from database: %s", e)
+        _oauth_clients_cache = {}
+
+
+def _get_client(client_id: str) -> dict | None:
+    """Get OAuth client from in-memory cache."""
+    return _oauth_clients_cache.get(client_id)
 
 
 def get_base_url() -> str:
@@ -104,17 +133,28 @@ async def register_client(request: ClientRegistrationRequest):
     """Register a new OAuth client (used by ChatGPT).
 
     ChatGPT calls this automatically to register itself before starting OAuth flow.
+    Persists to database and updates in-memory cache.
     """
     client_id = str(uuid.uuid4())
     client_secret = secrets.token_urlsafe(32)
 
-    registered_clients[client_id] = {
+    client_data = {
+        "client_id": client_id,
         "client_secret": client_secret,
         "redirect_uris": request.redirect_uris,
         "client_name": request.client_name or "ChatGPT",
         "scope": request.scope or "mcp:read mcp:write",
-        "created_at": datetime.utcnow().isoformat()
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "client_secret_post",
     }
+
+    # Persist to database
+    save_oauth_client(client_data)
+
+    # Update in-memory cache
+    _oauth_clients_cache[client_id] = client_data
+    logger.info("Registered OAuth client: %s", client_id)
 
     return {
         "client_id": client_id,
@@ -145,10 +185,9 @@ async def authorize(
     Production: would show a consent screen asking user to approve.
     """
     # Validate client exists
-    if client_id not in registered_clients:
+    client = _get_client(client_id)
+    if not client:
         raise HTTPException(400, f"Invalid client_id: {client_id}")
-
-    client = registered_clients[client_id]
 
     # Validate redirect_uri
     if redirect_uri not in client["redirect_uris"]:
@@ -212,11 +251,11 @@ async def token(
     base_url = get_base_url()
 
     # Validate client credentials
-    if client_id not in registered_clients:
+    client = _get_client(client_id)
+    if not client:
         raise HTTPException(401, "Invalid client_id")
 
-    client = registered_clients[client_id]
-    if client["client_secret"] != client_secret:
+    if client.get("client_secret") != client_secret:
         raise HTTPException(401, "Invalid client_secret")
 
     if grant_type == "authorization_code":
