@@ -10,10 +10,14 @@ Pool configuration:
 - pool_recycle=1800 → recycle before Azure's 30-min idle kill
 """
 
+import hashlib
+import json
+import secrets
 import struct
 import time
 import logging
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Generator, Any
 
@@ -198,3 +202,206 @@ def rows_to_list(cursor: pyodbc.Cursor, rows: list) -> list[dict]:
     """Convert multiple pyodbc rows to a list of dictionaries."""
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row)) for row in rows]
+
+
+# ============================================================================
+# CLIENT TOKEN MANAGEMENT
+# ============================================================================
+
+@retry_on_transient()
+def validate_client_token(token_hash: str) -> dict | None:
+    """Validate an MCP auth token against the database.
+
+    Returns dict with {client_name, client_email} if valid, None if invalid/expired/revoked.
+    Updates LastUsedAt on successful validation.
+    """
+    with get_db() as cursor:
+        cursor.execute(
+            """
+            UPDATE ClientToken
+            SET LastUsedAt = GETUTCDATE()
+            OUTPUT inserted.ClientName, inserted.ClientEmail
+            WHERE TokenHash = ?
+              AND IsActive = 1
+              AND (ExpiresAt IS NULL OR ExpiresAt > GETUTCDATE())
+            """,
+            (token_hash,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return {"client_name": row[0], "client_email": row[1]}
+        return None
+
+
+@retry_on_transient()
+def create_client_token(
+    client_name: str,
+    client_email: str,
+    created_by: str,
+    expires_days: int | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Generate a new client token and store its hash.
+
+    Returns dict with {token (plaintext — show ONCE), token_hash, client_name, expires_at}.
+    """
+    plaintext_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(plaintext_token.encode()).hexdigest()
+
+    expires_at = None
+    if expires_days is not None:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+
+    with get_db() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO ClientToken (TokenHash, ClientName, ClientEmail, CreatedBy, ExpiresAt, Notes)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (token_hash, client_name, client_email, created_by, expires_at, notes)
+        )
+
+    return {
+        "token": plaintext_token,
+        "token_hash": token_hash,
+        "client_name": client_name,
+        "client_email": client_email,
+        "expires_at": expires_at.isoformat() if expires_at else "never",
+    }
+
+
+@retry_on_transient()
+def insert_token_hash(
+    token_hash: str,
+    client_name: str,
+    client_email: str,
+    created_by: str,
+    notes: str | None = None,
+) -> bool:
+    """Insert a pre-computed token hash (used for migration from env var)."""
+    with get_db() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO ClientToken (TokenHash, ClientName, ClientEmail, CreatedBy, Notes)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (token_hash, client_name, client_email, created_by, notes)
+        )
+    return True
+
+
+@retry_on_transient()
+def revoke_client_token(token_id: int) -> bool:
+    """Revoke a token by setting IsActive = 0."""
+    with get_db() as cursor:
+        cursor.execute(
+            "UPDATE ClientToken SET IsActive = 0 WHERE TokenId = ?",
+            (token_id,)
+        )
+        return cursor.rowcount > 0
+
+
+@retry_on_transient()
+def list_client_tokens() -> list[dict]:
+    """List all tokens with metadata (NOT the hash — for admin display only)."""
+    with get_db() as cursor:
+        cursor.execute(
+            """
+            SELECT TokenId, ClientName, ClientEmail, IsActive,
+                   ExpiresAt, CreatedAt, CreatedBy, LastUsedAt, Notes
+            FROM ClientToken
+            ORDER BY CreatedAt DESC
+            """
+        )
+        return rows_to_list(cursor, cursor.fetchall())
+
+
+# ============================================================================
+# OAUTH CLIENT PERSISTENCE
+# ============================================================================
+
+@retry_on_transient()
+def save_oauth_client(client_data: dict):
+    """Persist an OAuth client registration to database."""
+    with get_db() as cursor:
+        cursor.execute(
+            """
+            MERGE INTO OAuthClient AS target
+            USING (SELECT ? AS ClientId) AS source
+            ON target.ClientId = source.ClientId
+            WHEN MATCHED THEN UPDATE SET
+                ClientName = ?,
+                ClientSecret = ?,
+                RedirectUris = ?,
+                GrantTypes = ?,
+                ResponseTypes = ?,
+                Scope = ?,
+                TokenEndpointAuthMethod = ?
+            WHEN NOT MATCHED THEN INSERT
+                (ClientId, ClientName, ClientSecret, RedirectUris, GrantTypes,
+                 ResponseTypes, Scope, TokenEndpointAuthMethod)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                client_data["client_id"],
+                # WHEN MATCHED (update)
+                client_data.get("client_name", ""),
+                client_data.get("client_secret", ""),
+                json.dumps(client_data.get("redirect_uris", [])),
+                json.dumps(client_data.get("grant_types", ["authorization_code"])),
+                json.dumps(client_data.get("response_types", ["code"])),
+                client_data.get("scope", ""),
+                client_data.get("token_endpoint_auth_method", "none"),
+                # WHEN NOT MATCHED (insert)
+                client_data["client_id"],
+                client_data.get("client_name", ""),
+                client_data.get("client_secret", ""),
+                json.dumps(client_data.get("redirect_uris", [])),
+                json.dumps(client_data.get("grant_types", ["authorization_code"])),
+                json.dumps(client_data.get("response_types", ["code"])),
+                client_data.get("scope", ""),
+                client_data.get("token_endpoint_auth_method", "none"),
+            )
+        )
+
+
+@retry_on_transient()
+def get_oauth_client(client_id: str) -> dict | None:
+    """Retrieve an OAuth client registration from database."""
+    with get_db() as cursor:
+        cursor.execute(
+            "SELECT * FROM OAuthClient WHERE ClientId = ? AND IsActive = 1",
+            (client_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return row_to_dict(cursor, row)
+        return None
+
+
+@retry_on_transient()
+def load_all_oauth_clients() -> dict:
+    """Load all active OAuth clients (for startup cache population).
+
+    Returns dict keyed by client_id with lowercase keys matching the
+    format used by the register endpoint in oauth.py.
+    """
+    with get_db() as cursor:
+        cursor.execute("SELECT * FROM OAuthClient WHERE IsActive = 1")
+        rows = cursor.fetchall()
+        clients = {}
+        for row in rows:
+            d = row_to_dict(cursor, row)
+            # Normalize to lowercase keys matching oauth.py register format
+            client = {
+                "client_id": d["ClientId"],
+                "client_name": d.get("ClientName", ""),
+                "client_secret": d.get("ClientSecret", ""),
+                "redirect_uris": json.loads(d.get("RedirectUris", "[]")),
+                "grant_types": json.loads(d.get("GrantTypes", "[]")),
+                "response_types": json.loads(d.get("ResponseTypes", "[]")),
+                "scope": d.get("Scope", ""),
+                "token_endpoint_auth_method": d.get("TokenEndpointAuthMethod", "none"),
+            }
+            clients[client["client_id"]] = client
+        return clients
