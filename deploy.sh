@@ -2,6 +2,13 @@
 set -e
 
 # =============================================================================
+# DEPRECATED: Use infra/deploy-bicep.sh instead
+# This script is retained for reference only. The Bicep-based deployment
+# (infra/deploy-bicep.sh) provides IaC, Key Vault secrets, budget alerts,
+# resource tagging, and health probe configuration.
+# =============================================================================
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
