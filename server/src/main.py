@@ -124,10 +124,30 @@ def run_http():
     for route in api_app.routes:
         app.routes.append(route)
 
-    # Health check (defined after route appends to ensure proper ordering)
+    # Health probes (defined after route appends to ensure proper ordering)
     @app.get("/health")
     def health():
         return {"status": "healthy", "transports": ["sse", "streamable-http"], "oauth": True}
+
+    @app.get("/health/live")
+    def health_live():
+        """Liveness probe — process is running."""
+        return {"status": "alive"}
+
+    @app.get("/health/ready")
+    def health_ready():
+        """Readiness probe — verifies database is accessible."""
+        from starlette.responses import JSONResponse
+        from .database import test_connection
+        try:
+            test_connection()
+            return {"status": "ready", "database": "connected"}
+        except Exception as e:
+            logger.warning("Readiness check failed: %s", e)
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not ready", "database": "unavailable"}
+            )
 
     # Static files for web UI
     static_dir = os.path.join(os.path.dirname(__file__), "..", "static")

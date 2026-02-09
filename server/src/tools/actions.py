@@ -2,9 +2,10 @@
 
 from datetime import datetime, date
 from typing import Optional
-from ..database import get_db
+from ..database import get_db, is_transient_error, retry_on_transient
 
 
+@retry_on_transient()
 def list_actions(
     status: Optional[str] = None,
     owner: Optional[str] = None,
@@ -94,9 +95,12 @@ def list_actions(
             
             return {"actions": actions, "count": len(actions)}
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def get_action(action_id: int) -> dict:
     """
     Get full details of a specific action.
@@ -148,9 +152,12 @@ def get_action(action_id: int) -> dict:
                 "updated_by": row[10]
             }
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def create_action(
     action_text: str,
     owner: str,
@@ -217,9 +224,12 @@ def create_action(
                 "message": "Action created successfully"
             }
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def update_action(
     action_id: int,
     user_email: str,
@@ -302,9 +312,12 @@ def update_action(
         # Return updated action (new transaction)
         return get_action(action_id)
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def complete_action(action_id: int, user_email: str) -> dict:
     """
     Mark an action as complete. Sets status to "Complete".
@@ -334,9 +347,12 @@ def complete_action(action_id: int, user_email: str) -> dict:
             
         return get_action(action_id)
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def park_action(action_id: int, user_email: str) -> dict:
     """
     Park an action (put on hold). Sets status to "Parked".
@@ -366,9 +382,12 @@ def park_action(action_id: int, user_email: str) -> dict:
             
         return get_action(action_id)
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def delete_action(action_id: int) -> dict:
     """
     Permanently delete an action. This cannot be undone.
@@ -393,4 +412,6 @@ def delete_action(action_id: int) -> dict:
             
             return {"message": f"Action {action_id} deleted successfully", "deleted": True}
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}

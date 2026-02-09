@@ -2,9 +2,10 @@
 
 from datetime import datetime
 from typing import Optional
-from ..database import get_db, row_to_dict, rows_to_list
+from ..database import get_db, row_to_dict, rows_to_list, is_transient_error, retry_on_transient
 
 
+@retry_on_transient()
 def list_meetings(
     limit: int = 20,
     days_back: int = 30,
@@ -76,9 +77,12 @@ def list_meetings(
 
             return {"meetings": meetings, "count": len(meetings)}
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def get_meeting(meeting_id: int) -> dict:
     """
     Get full details of a specific meeting.
@@ -135,9 +139,12 @@ def get_meeting(meeting_id: int) -> dict:
                 "updated_by": row[12]
             }
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def search_meetings(query: str, limit: int = 10) -> dict:
     """
     Search meetings by keyword in title or transcript.
@@ -193,9 +200,12 @@ def search_meetings(query: str, limit: int = 10) -> dict:
             
             return {"results": results, "count": len(results)}
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def create_meeting(
     title: str,
     meeting_date: str,
@@ -261,9 +271,12 @@ def create_meeting(
                 "message": "Meeting created successfully"
             }
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def update_meeting(
     meeting_id: int,
     user_email: str,
@@ -345,9 +358,12 @@ def update_meeting(
         # Return updated meeting (new transaction)
         return get_meeting(meeting_id)
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def delete_meeting(meeting_id: int) -> dict:
     """
     Permanently delete a meeting and all associated actions and decisions.
@@ -380,4 +396,6 @@ def delete_meeting(meeting_id: int) -> dict:
 
             return {"success": True, "message": f"Meeting '{title}' (ID {meeting_id}) deleted"}
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}

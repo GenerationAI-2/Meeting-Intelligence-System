@@ -2,9 +2,10 @@
 
 from datetime import datetime
 from typing import Optional
-from ..database import get_db
+from ..database import get_db, is_transient_error, retry_on_transient
 
 
+@retry_on_transient()
 def list_decisions(
     meeting_id: Optional[int] = None,
     limit: int = 50
@@ -68,9 +69,12 @@ def list_decisions(
             
             return {"decisions": decisions, "count": len(decisions)}
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def get_decision(decision_id: int) -> dict:
     """
     Get full details of a specific decision.
@@ -115,9 +119,12 @@ def get_decision(decision_id: int) -> dict:
                 "created_by": row[6]
             }
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def create_decision(
     meeting_id: int,
     decision_text: str,
@@ -172,9 +179,12 @@ def create_decision(
                 "message": "Decision recorded successfully"
             }
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
 
 
+@retry_on_transient()
 def delete_decision(decision_id: int) -> dict:
     """
     Permanently delete a decision.
@@ -201,4 +211,6 @@ def delete_decision(decision_id: int) -> dict:
 
             return {"success": True, "message": f"Decision {decision_id} deleted"}
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
