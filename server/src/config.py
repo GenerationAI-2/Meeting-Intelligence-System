@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # CORS origins (comma-separated URLs)
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # OAuth 2.1 settings (for ChatGPT MCP support)
+    jwt_secret: str = ""  # Required for OAuth - generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    oauth_base_url: str = ""  # Set to deployed URL, e.g., https://meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io
+
+    # Observability (optional but recommended for production)
+    applicationinsights_connection_string: str = ""  # Get from Azure Portal > Application Insights > Connection String
+
     def get_mcp_user(self, token: str) -> str | None:
         """Look up user email from MCP token. Returns None if token invalid."""
         if not self.mcp_auth_tokens:

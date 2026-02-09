@@ -1,6 +1,6 @@
 # Meeting Intelligence System - Agent Context
 
-**Last Updated:** 2026-02-04
+**Last Updated:** 2026-02-05
 **Project Status:** BUILD
 **Owner:** Caleb Lucas
 
@@ -30,11 +30,13 @@ npm run dev  # Run on :5173
 ```
 
 **Required environment variables (in `.env.deploy`):**
-- `SQL_SERVER` — Azure SQL server hostname
-- `AZURE_CLIENT_ID` — Managed Identity client ID for DB auth
+- `AZURE_SQL_SERVER` — Azure SQL server hostname
+- `AZURE_SQL_DATABASE` — Database name
 - `MCP_AUTH_TOKENS` — JSON map of token hashes to emails
 - `ALLOWED_USERS` — Comma-separated emails for web UI access
 - `CORS_ORIGINS` — Allowed CORS origins
+- `JWT_SECRET` — Secret for OAuth JWT tokens
+- `OAUTH_BASE_URL` — Base URL for OAuth endpoints (e.g., team instance URL)
 - `VITE_*` — Frontend config (client ID, tenant, API URL)
 
 ---
@@ -65,6 +67,7 @@ web/src/
 | File | Purpose |
 |------|---------|
 | `server/src/mcp_server.py` | MCP tool definitions - what Claude can do |
+| `server/src/oauth.py` | OAuth 2.1 endpoints for ChatGPT MCP support |
 | `server/src/tools/meetings.py` | Meeting CRUD + delete (cascades to actions/decisions) |
 | `server/src/config.py` | All environment variable handling |
 | `server/src/database.py` | Azure SQL connection with managed identity |
@@ -93,6 +96,8 @@ web/src/
 | Using MI Object ID for DB SID | Azure SQL needs Application (Client) ID, not Object ID | 2026-02-01 |
 | Plaintext MCP tokens | System expects hash as token; hash maps to email in config | 2026-02-02 |
 | Git commit tag for deploys | Same tag = no new revision; need unique tag per deploy | 2026-02-03 |
+| FastAPI route param name mismatch | Route `{path:path}` with function arg `_path` - FastAPI interprets as query param, causing JSON error on page refresh. Names must match. | 2026-02-05 |
+| YAML update for health probes | `az containerapp update --yaml` wipes ALL env vars. Symptom: 401 errors, double-slash in OpenID config URL. Fix: configure probes once via Portal, not in deploy.sh. | 2026-02-05 |
 
 ---
 
@@ -102,21 +107,34 @@ web/src/
 - Full CRUD for meetings, actions, decisions via MCP and web UI
 - Delete operations for all entities (including cascade delete for meetings)
 - Azure AD authentication for web UI
-- Token auth for MCP/Claude
+- MCP authentication (multiple methods):
+  - Token auth (query param / Bearer header) for Claude
+  - Path-based token auth for Copilot (`/mcp/{token}`)
+  - OAuth 2.1 with PKCE for ChatGPT (team instance only)
+- Streamable HTTP transport (`/mcp`) for Copilot and ChatGPT
+- SSE transport (`/sse`) for Claude Desktop
 - Attendee and tag filtering on meetings
 - Transcript storage and search
-- Three environments: dev, team, prod
+- Two environments: team (internal), demo (Mark sign-off)
+- **Observability (team instance):**
+  - Application Insights telemetry
+  - Structured logging (no print statements)
+  - Health probes (Liveness + Readiness)
+  - Azure SQL Auditing (90-day retention)
+- **Documentation package complete** (10 docs in `/docs`):
+  - system-overview.md, user-guide.md, platform-setup.md
+  - architecture.md, security.md, deployment-guide.md
+  - admin-database.md, user-admin.md, cost-summary.md, troubleshooting.md
 
 **What's in progress (Phase 2 Days 6-10):**
-- Governance docs (admin, security, audit, onboarding)
-- Multi-platform testing (ChatGPT, Copilot MCP integration)
-- Productisation docs (system overview, user guide, deployment)
+- ChatGPT MCP testing (OAuth implemented on team instance, needs end-to-end testing)
 - Mark sign-off
 
 **Known issues:**
 - Cold start delay (2-5 sec) when apps scale from 0
 - No email notifications for actions
 - No Fireflies integration (removed)
+- ChatGPT requires connector to be manually enabled in Tools menu per chat
 
 ---
 
@@ -127,6 +145,7 @@ web/src/
 - [ ] Log Analytics workspaces created per environment (could consolidate)
 - [ ] Legacy `meeting-intelligence-v2-rg` resource group still exists (can delete)
 - [ ] MCP auth tokens use old @myadvisor.co.nz domain in mapping
+- [ ] OAuth 2.1 uses in-memory storage - clients/codes lost on container restart (fine for MVP)
 
 ---
 
@@ -135,9 +154,10 @@ web/src/
 | Package | Version | Why |
 |---------|---------|-----|
 | FastAPI | latest | Web framework with async support |
-| mcp | latest | Model Context Protocol SDK |
+| mcp[cli] | >=1.8.0 | Model Context Protocol SDK (Streamable HTTP) |
 | pyodbc | latest | Azure SQL connectivity |
 | pydantic-settings | latest | Environment config management |
+| PyJWT | latest | OAuth 2.1 JWT token handling |
 | React | 18.x | Frontend framework |
 | MSAL React | latest | Azure AD authentication |
 | Vite | latest | Frontend build tool |
@@ -168,7 +188,7 @@ When working in this codebase:
 
 ## Second Brain Sync
 
-This repo is linked to a project folder in Second Brain. **ALWAYS update both locations together.**
+This repo is linked to a project folder in Second Brain. See `.claude/REPO-SYNC-INSTRUCTIONS.md` for the full sync process.
 
 ### Absolute Paths
 
@@ -178,22 +198,30 @@ This repo is linked to a project folder in Second Brain. **ALWAYS update both lo
 | Skills folder | `/Users/caleblucas/Second Brain/Project Management/Skills/` |
 | CHANGELOG | `/Users/caleblucas/Second Brain/Project Management/CHANGELOG.md` |
 
+### Primary Sync Target
+
+**`_repo-context.md`** — Mandatory. Update at session end with architecture, recent changes, tech debt, and current state. This is the standard interface between repo-side and Cowork-side agents.
+
+### Additional Sync Files (Project-Specific)
+
+These supplement `_repo-context.md` for this project:
+
+| When | Update | Full Path |
+|------|--------|-----------|
+| Session end | `_repo-context.md` | `.../GenerationAI - Meeting Intelligence System/_repo-context.md` |
+| Session end | `_repo-link.md` sync date | `.../GenerationAI - Meeting Intelligence System/_repo-link.md` |
+| Status/milestone change | `_status.md` | `.../GenerationAI - Meeting Intelligence System/_status.md` |
+| Key decision made | `mi-decisions.md` | `.../GenerationAI - Meeting Intelligence System/2-build/mi-decisions.md` |
+| Sprint work done | `mi-sprint-execution.md` | `.../GenerationAI - Meeting Intelligence System/2-build/mi-sprint-execution.md` |
+| Learned reusable pattern | Skill file | `/Users/caleblucas/Second Brain/Project Management/Skills/[skill-name]/SKILL.md` |
+| Session ends | CHANGELOG | `/Users/caleblucas/Second Brain/Project Management/CHANGELOG.md` |
+
 ### Files That Must Stay In Sync
 
 When project status changes, update ALL of these together:
 1. **This file** (`CLAUDE.md`) — Project Status field and Current State section
-2. **`_status.md`** — Stage field and Current State section
-3. **`mi-sprint-execution.md`** — Day status and Definition of Done
-
-### What to Update in Second Brain
-
-| When | Update | Full Path |
-|------|--------|-----------|
-| Repo created / moved | `_repo-link.md` | `.../GenerationAI - Meeting Intelligence System/_repo-link.md` |
-| Status/milestone change | `_status.md` | `.../GenerationAI - Meeting Intelligence System/_status.md` |
-| Key decision made | `mi-decisions.md` | `.../GenerationAI - Meeting Intelligence System/2-build/mi-decisions.md` |
-| Learned reusable pattern | Skill file | `/Users/caleblucas/Second Brain/Project Management/Skills/[skill-name]/SKILL.md` |
-| Session ends | CHANGELOG | `/Users/caleblucas/Second Brain/Project Management/CHANGELOG.md` |
+2. **`_repo-context.md`** — Current State and Recent Changes
+3. **`_status.md`** — Stage field and Current State section
 
 ### How to Update
 
@@ -211,13 +239,12 @@ If you don't have access to Second Brain folder:
 
 ## Environments
 
-| Environment | Web URL | Database | Scale |
-|-------------|---------|----------|-------|
-| Dev | meeting-intelligence-dev.victoriousbush-9db31fb8.australiaeast.azurecontainerapps.io | meeting-intelligence-dev | 0-1 |
-| Team | meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io | meeting-intelligence-team | 0-10 |
-| Prod | meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io | meeting-intelligence | 0-10 |
+| Environment | Web URL | Database | Scale | Purpose |
+|-------------|---------|----------|-------|---------|
+| Team | meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io | meeting-intelligence-team | 0-10 | Internal use |
+| Demo | meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io | meeting-intelligence | 0-10 | Mark sign-off |
 
-**Estimated monthly cost:** ~$28 AUD (all scale-to-zero)
+**Estimated monthly cost:** ~$33 AUD (both scale-to-zero)
 
 ---
 
@@ -235,8 +262,9 @@ If you don't have access to Second Brain folder:
 
 | Skill | Absolute Path | Last Synced |
 |-------|---------------|-------------|
-| azure-container-apps | `/Users/caleblucas/Second Brain/Project Management/Skills/azure-container-apps/SKILL.md` | 2026-02-04 |
+| azure-container-apps | `/Users/caleblucas/Second Brain/Project Management/Skills/azure-container-apps/SKILL.md` | 2026-02-05 |
 | mcp-copilot-integration | `/Users/caleblucas/Second Brain/Project Management/Skills/mcp-copilot-integration/SKILL.md` | 2026-02-04 |
+| mcp-chatgpt-integration | `/Users/caleblucas/Second Brain/Project Management/Skills/mcp-chatgpt-integration/SKILL.md` | 2026-02-05 |
 
 ---
 

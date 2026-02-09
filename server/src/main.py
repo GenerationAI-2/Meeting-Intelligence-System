@@ -3,7 +3,13 @@
 import sys
 import asyncio
 import contextlib
+
+from .logging_config import configure_logging, get_logger
 from .mcp_server import mcp
+
+# Configure logging at module load (before any other imports that might log)
+configure_logging()
+logger = get_logger(__name__)
 
 
 async def run_stdio():
@@ -22,6 +28,7 @@ def run_http():
 
     from .api import app as api_app  # REST API endpoints
     from .config import get_settings
+    from .oauth import router as oauth_router, validate_oauth_token
 
     settings = get_settings()
     valid_tokens = settings.get_valid_mcp_tokens()
@@ -81,11 +88,20 @@ def run_http():
         if not token:
             token = request.headers.get("X-API-Key")
 
-        # Check Authorization header
+        # Check Authorization header (Bearer token)
         if not token:
             auth = request.headers.get("Authorization", "")
             if auth.startswith("Bearer "):
-                token = auth[7:]
+                bearer_token = auth[7:]
+                # First check if it's an MCP static token
+                if bearer_token in valid_tokens:
+                    token = bearer_token
+                else:
+                    # Try validating as OAuth token (for ChatGPT)
+                    oauth_payload = validate_oauth_token(bearer_token)
+                    if oauth_payload:
+                        # Valid OAuth token - allow request
+                        return await call_next(request)
 
         if token not in valid_tokens:
             return Response("Unauthorized", status_code=401)
@@ -100,6 +116,9 @@ def run_http():
     for route in sse_app.routes:
         app.routes.append(route)
 
+    # Mount OAuth endpoints (for ChatGPT support)
+    app.include_router(oauth_router)
+
     # Mount REST API - api_app routes are /api/*, so include directly
     # Since api_app already has /api prefix, we add its routes to main app
     for route in api_app.routes:
@@ -108,7 +127,7 @@ def run_http():
     # Health check (defined after route appends to ensure proper ordering)
     @app.get("/health")
     def health():
-        return {"status": "healthy", "transports": ["sse", "streamable-http"]}
+        return {"status": "healthy", "transports": ["sse", "streamable-http"], "oauth": True}
 
     # Static files for web UI
     static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
@@ -120,16 +139,13 @@ def run_http():
             return FileResponse(os.path.join(static_dir, "index.html"))
 
         # SPA catch-all - must be defined LAST
-        @app.get("/{path:path}")
-        async def serve_spa(_path: str):
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
             # Let API, MCP, and health routes pass through (they should be matched first)
             return FileResponse(os.path.join(static_dir, "index.html"))
 
-    print("Starting Meeting Intelligence Server...")
-    print("  Streamable HTTP: http://localhost:8000/mcp (Copilot)")
-    print("  SSE:             http://localhost:8000/sse (Claude Desktop)")
-    print("  REST API:        http://localhost:8000/api/...")
-    print("  Web UI:          http://localhost:8000/")
+    logger.info("Starting Meeting Intelligence Server")
+    logger.info("Endpoints: MCP=/mcp (Copilot), SSE=/sse (Claude), OAuth=/oauth/*, API=/api/*, UI=/")
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
 

@@ -2,7 +2,14 @@
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 from .tools import meetings, actions, decisions
+
+# Tool annotations for ChatGPT compatibility
+# ChatGPT requires these hints to properly classify tools
+READ_ONLY = ToolAnnotations(readOnlyHint=True)
+WRITE = ToolAnnotations(readOnlyHint=False)
+DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
 
 # Configure transport security - disable DNS rebinding protection
 # (we use token-based auth instead)
@@ -25,7 +32,7 @@ SYSTEM_USER = "system@generationai.co.nz"
 # MEETING TOOLS
 # ============================================================================
 
-@mcp.tool(description="List recent meetings. Returns id, title, date, attendees, source, tags. Can filter by attendee or tag.")
+@mcp.tool(description="List recent meetings. Returns id, title, date, attendees, source, tags. Can filter by attendee or tag.", annotations=READ_ONLY)
 def list_meetings(
     limit: int = 20,
     days_back: int = 30,
@@ -35,17 +42,17 @@ def list_meetings(
     return meetings.list_meetings(limit=limit, days_back=days_back, attendee=attendee, tag=tag)
 
 
-@mcp.tool(description="Get full details of a specific meeting including summary and transcript.")
+@mcp.tool(description="Get full details of a specific meeting including summary and transcript.", annotations=READ_ONLY)
 def get_meeting(meeting_id: int) -> dict:
     return meetings.get_meeting(meeting_id)
 
 
-@mcp.tool(description="Search meetings by keyword in title and transcript. Returns matching meetings with context snippet.")
+@mcp.tool(description="Search meetings by keyword in title and transcript. Returns matching meetings with context snippet.", annotations=READ_ONLY)
 def search_meetings(query: str, limit: int = 10) -> dict:
     return meetings.search_meetings(query=query, limit=limit)
 
 
-@mcp.tool(description="Create a new meeting record.")
+@mcp.tool(description="Create a new meeting record.", annotations=WRITE)
 def create_meeting(
     title: str,
     meeting_date: str,
@@ -69,7 +76,7 @@ def create_meeting(
     )
 
 
-@mcp.tool(description="Update an existing meeting. Can update title, summary, attendees, transcript, or tags.")
+@mcp.tool(description="Update an existing meeting. Can update title, summary, attendees, transcript, or tags.", annotations=WRITE)
 def update_meeting(
     meeting_id: int,
     title: str = None,
@@ -89,7 +96,7 @@ def update_meeting(
     )
 
 
-@mcp.tool(description="Permanently delete a meeting and all its linked actions and decisions. Cannot be undone. Confirm with user before calling.")
+@mcp.tool(description="Permanently delete a meeting and all its linked actions and decisions. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
 def delete_meeting(meeting_id: int) -> dict:
     return meetings.delete_meeting(meeting_id)
 
@@ -98,7 +105,7 @@ def delete_meeting(meeting_id: int) -> dict:
 # ACTION TOOLS
 # ============================================================================
 
-@mcp.tool(description="List action items. Default returns Open actions only, sorted by due date.")
+@mcp.tool(description="List action items. Default returns Open actions only, sorted by due date.", annotations=READ_ONLY)
 def list_actions(
     status: str = None,
     owner: str = None,
@@ -108,12 +115,12 @@ def list_actions(
     return actions.list_actions(status=status, owner=owner, meeting_id=meeting_id, limit=limit)
 
 
-@mcp.tool(description="Get full details of a specific action including notes and timestamps.")
+@mcp.tool(description="Get full details of a specific action including notes and timestamps.", annotations=READ_ONLY)
 def get_action(action_id: int) -> dict:
     return actions.get_action(action_id)
 
 
-@mcp.tool(description="Create a new action item. Status defaults to 'Open'.")
+@mcp.tool(description="Create a new action item. Status defaults to 'Open'.", annotations=WRITE)
 def create_action(
     action_text: str,
     owner: str,
@@ -131,7 +138,7 @@ def create_action(
     )
 
 
-@mcp.tool(description="Update an existing action. Cannot change status (use complete_action or park_action).")
+@mcp.tool(description="Update an existing action. Cannot change status (use complete_action or park_action).", annotations=WRITE)
 def update_action(
     action_id: int,
     action_text: str = None,
@@ -149,17 +156,17 @@ def update_action(
     )
 
 
-@mcp.tool(description="Mark an action as complete. Idempotent - completing an already-complete action is not an error.")
+@mcp.tool(description="Mark an action as complete. Idempotent - completing an already-complete action is not an error.", annotations=WRITE)
 def complete_action(action_id: int) -> dict:
     return actions.complete_action(action_id, SYSTEM_USER)
 
 
-@mcp.tool(description="Park an action (put on hold). Parked actions can be reopened via update_action.")
+@mcp.tool(description="Park an action (put on hold). Parked actions can be reopened via update_action.", annotations=WRITE)
 def park_action(action_id: int) -> dict:
     return actions.park_action(action_id, SYSTEM_USER)
 
 
-@mcp.tool(description="Permanently delete an action. Cannot be undone. Confirm with user before calling.")
+@mcp.tool(description="Permanently delete an action. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
 def delete_action(action_id: int) -> dict:
     return actions.delete_action(action_id)
 
@@ -168,12 +175,12 @@ def delete_action(action_id: int) -> dict:
 # DECISION TOOLS
 # ============================================================================
 
-@mcp.tool(description="List decisions from meetings. Sorted by created date, most recent first.")
+@mcp.tool(description="List decisions from meetings. Sorted by created date, most recent first.", annotations=READ_ONLY)
 def list_decisions(meeting_id: int = None, limit: int = 50) -> dict:
     return decisions.list_decisions(meeting_id=meeting_id, limit=limit)
 
 
-@mcp.tool(description="Record a decision made in a meeting.")
+@mcp.tool(description="Record a decision made in a meeting.", annotations=WRITE)
 def create_decision(
     meeting_id: int,
     decision_text: str,
@@ -187,6 +194,6 @@ def create_decision(
     )
 
 
-@mcp.tool(description="Permanently delete a decision. Cannot be undone. Confirm with user before calling.")
+@mcp.tool(description="Permanently delete a decision. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
 def delete_decision(decision_id: int) -> dict:
     return decisions.delete_decision(decision_id)

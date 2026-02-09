@@ -9,3 +9,6 @@ httpx>=0.26.0
 python-dotenv>=1.0.0
 azure-identity>=1.15.0
 fastapi-azure-auth>=5.0.0
+PyJWT>=2.8.0
+python-multipart>=0.0.6
+azure-monitor-opentelemetry>=1.6.0

@@ -5,7 +5,7 @@ set -e
 # CONFIGURATION
 # =============================================================================
 
-ENV="${1:-dev}"
+ENV="${1:-team}"
 
 # Load local secrets if available (gitignored)
 if [ -f .env.deploy ]; then
@@ -19,26 +19,27 @@ fi
 : "${MCP_AUTH_TOKENS:?MCP_AUTH_TOKENS must be set (export or .env.deploy)}"
 : "${ALLOWED_USERS:?ALLOWED_USERS must be set}"
 : "${CORS_ORIGINS:?CORS_ORIGINS must be set}"
+: "${JWT_SECRET:?JWT_SECRET must be set for OAuth support}"
+
+# Optional: Application Insights (recommended for production)
+APPINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
 
 # Environment-specific config
 case "$ENV" in
-    prod)
+    demo)
         RG="meeting-intelligence-prod-rg"
         APP_NAME="meeting-intelligence"
         DB_NAME="meeting-intelligence"
-        ;;
-    dev)
-        RG="meeting-intelligence-dev-rg"
-        APP_NAME="meeting-intelligence-dev"
-        DB_NAME="meeting-intelligence-dev"
+        OAUTH_BASE_URL="https://meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io"
         ;;
     team)
         RG="meeting-intelligence-team-rg"
         APP_NAME="meeting-intelligence-team"
         DB_NAME="meeting-intelligence-team"
+        OAUTH_BASE_URL="https://meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io"
         ;;
     *)
-        echo "Usage: ./deploy.sh [dev|prod|team]"
+        echo "Usage: ./deploy.sh [team|demo]"
         exit 1
         ;;
 esac
@@ -105,7 +106,10 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RG" &>/dev/null; t
             API_AZURE_TENANT_ID="$API_AZURE_TENANT_ID" \
             API_AZURE_CLIENT_ID="$API_AZURE_CLIENT_ID" \
             ALLOWED_USERS="$ALLOWED_USERS" \
-            CORS_ORIGINS="$CORS_ORIGINS"
+            CORS_ORIGINS="$CORS_ORIGINS" \
+            JWT_SECRET="$JWT_SECRET" \
+            OAUTH_BASE_URL="$OAUTH_BASE_URL" \
+            APPLICATIONINSIGHTS_CONNECTION_STRING="$APPINSIGHTS_CONNECTION_STRING"
 else
     # Create new
     az containerapp env create --name "$ACA_ENV" --resource-group "$RG" --location "$LOCATION" --output none 2>/dev/null || true
@@ -127,10 +131,24 @@ else
             API_AZURE_TENANT_ID="$API_AZURE_TENANT_ID" \
             API_AZURE_CLIENT_ID="$API_AZURE_CLIENT_ID" \
             ALLOWED_USERS="$ALLOWED_USERS" \
-            CORS_ORIGINS="$CORS_ORIGINS"
+            CORS_ORIGINS="$CORS_ORIGINS" \
+            JWT_SECRET="$JWT_SECRET" \
+            OAUTH_BASE_URL="$OAUTH_BASE_URL" \
+            APPLICATIONINSIGHTS_CONNECTION_STRING="$APPINSIGHTS_CONNECTION_STRING"
 fi
 
-# 5. Output results
+# 5. Check health probes status
+# Note: Health probes are configured once via Azure Portal or CLI, not on every deploy
+# (Azure CLI YAML updates can wipe env vars, so we skip automated probe config)
+PROBE_COUNT=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "length(properties.template.containers[0].probes || [])" -o tsv 2>/dev/null)
+if [ "$PROBE_COUNT" -gt 0 ] 2>/dev/null; then
+    echo "Health probes: configured ($PROBE_COUNT probes)"
+else
+    echo "Health probes: NOT configured - run 'az containerapp update --yaml' manually"
+    echo "  See: docs/now-items-implementation-prompt.md for probe configuration"
+fi
+
+# 6. Output results
 APP_URL=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query properties.configuration.ingress.fqdn -o tsv)
 echo ""
 echo "=========================================="
