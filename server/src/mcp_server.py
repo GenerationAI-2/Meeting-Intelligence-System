@@ -3,7 +3,13 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from pydantic import ValidationError
 from .tools import meetings, actions, decisions
+from .schemas import (
+    MeetingCreate, MeetingUpdate, MeetingId, MeetingSearch, MeetingListFilter,
+    ActionCreate, ActionUpdate, ActionId, ActionListFilter,
+    DecisionCreate, DecisionId, DecisionListFilter,
+)
 
 # Tool annotations for ChatGPT compatibility
 # ChatGPT requires these hints to properly classify tools
@@ -28,6 +34,17 @@ mcp = FastMCP(
 SYSTEM_USER = "system@generationai.co.nz"
 
 
+def _validation_error_response(e: ValidationError) -> dict:
+    """Convert Pydantic ValidationError to user-friendly MCP response."""
+    errors = e.errors()
+    if len(errors) == 1:
+        field = errors[0].get('loc', ['unknown'])[-1]
+        msg = errors[0].get('msg', 'Invalid input')
+        return {"error": True, "code": "VALIDATION_ERROR", "message": f"Invalid {field}: {msg}"}
+    messages = [f"{err.get('loc', ['unknown'])[-1]}: {err.get('msg', '')}" for err in errors]
+    return {"error": True, "code": "VALIDATION_ERROR", "message": f"Validation errors: {'; '.join(messages)}"}
+
+
 # ============================================================================
 # MEETING TOOLS
 # ============================================================================
@@ -39,17 +56,32 @@ def list_meetings(
     attendee: str = None,
     tag: str = None
 ) -> dict:
-    return meetings.list_meetings(limit=limit, days_back=days_back, attendee=attendee, tag=tag)
+    try:
+        validated = MeetingListFilter(limit=limit, days_back=days_back, attendee=attendee, tag=tag)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return meetings.list_meetings(
+        limit=validated.limit, days_back=validated.days_back or 30,
+        attendee=validated.attendee, tag=validated.tag
+    )
 
 
 @mcp.tool(description="Get full details of a specific meeting including summary and transcript.", annotations=READ_ONLY)
 def get_meeting(meeting_id: int) -> dict:
-    return meetings.get_meeting(meeting_id)
+    try:
+        validated = MeetingId(meeting_id=meeting_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return meetings.get_meeting(validated.meeting_id)
 
 
 @mcp.tool(description="Search meetings by keyword in title and transcript. Returns matching meetings with context snippet.", annotations=READ_ONLY)
 def search_meetings(query: str, limit: int = 10) -> dict:
-    return meetings.search_meetings(query=query, limit=limit)
+    try:
+        validated = MeetingSearch(query=query, limit=limit)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return meetings.search_meetings(query=validated.query, limit=validated.limit)
 
 
 @mcp.tool(description="Create a new meeting record.", annotations=WRITE)
@@ -63,16 +95,24 @@ def create_meeting(
     source_meeting_id: str = None,
     tags: str = None
 ) -> dict:
+    try:
+        validated = MeetingCreate(
+            title=title, meeting_date=meeting_date, attendees=attendees,
+            summary=summary, transcript=transcript, source=source,
+            source_meeting_id=source_meeting_id, tags=tags
+        )
+    except ValidationError as e:
+        return _validation_error_response(e)
     return meetings.create_meeting(
-        title=title,
-        meeting_date=meeting_date,
+        title=validated.title,
+        meeting_date=validated.meeting_date,
         user_email=SYSTEM_USER,
-        attendees=attendees,
-        summary=summary,
-        transcript=transcript,
-        source=source,
-        source_meeting_id=source_meeting_id,
-        tags=tags
+        attendees=validated.attendees,
+        summary=validated.summary,
+        transcript=validated.transcript,
+        source=validated.source,
+        source_meeting_id=validated.source_meeting_id,
+        tags=validated.tags
     )
 
 
@@ -85,20 +125,32 @@ def update_meeting(
     transcript: str = None,
     tags: str = None
 ) -> dict:
+    try:
+        MeetingId(meeting_id=meeting_id)
+        validated = MeetingUpdate(
+            title=title, summary=summary, attendees=attendees,
+            transcript=transcript, tags=tags
+        )
+    except ValidationError as e:
+        return _validation_error_response(e)
     return meetings.update_meeting(
         meeting_id=meeting_id,
         user_email=SYSTEM_USER,
-        title=title,
-        summary=summary,
-        attendees=attendees,
-        transcript=transcript,
-        tags=tags
+        title=validated.title,
+        summary=validated.summary,
+        attendees=validated.attendees,
+        transcript=validated.transcript,
+        tags=validated.tags
     )
 
 
 @mcp.tool(description="Permanently delete a meeting and all its linked actions and decisions. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
 def delete_meeting(meeting_id: int) -> dict:
-    return meetings.delete_meeting(meeting_id)
+    try:
+        validated = MeetingId(meeting_id=meeting_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return meetings.delete_meeting(validated.meeting_id)
 
 
 # ============================================================================
@@ -112,12 +164,23 @@ def list_actions(
     meeting_id: int = None,
     limit: int = 50
 ) -> dict:
-    return actions.list_actions(status=status, owner=owner, meeting_id=meeting_id, limit=limit)
+    try:
+        validated = ActionListFilter(status=status, owner=owner, meeting_id=meeting_id, limit=limit)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return actions.list_actions(
+        status=validated.status, owner=validated.owner,
+        meeting_id=validated.meeting_id, limit=validated.limit
+    )
 
 
 @mcp.tool(description="Get full details of a specific action including notes and timestamps.", annotations=READ_ONLY)
 def get_action(action_id: int) -> dict:
-    return actions.get_action(action_id)
+    try:
+        validated = ActionId(action_id=action_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return actions.get_action(validated.action_id)
 
 
 @mcp.tool(description="Create a new action item. Status defaults to 'Open'.", annotations=WRITE)
@@ -128,13 +191,20 @@ def create_action(
     meeting_id: int = None,
     notes: str = None
 ) -> dict:
+    try:
+        validated = ActionCreate(
+            action_text=action_text, owner=owner,
+            due_date=due_date, meeting_id=meeting_id, notes=notes
+        )
+    except ValidationError as e:
+        return _validation_error_response(e)
     return actions.create_action(
-        action_text=action_text,
-        owner=owner,
+        action_text=validated.action_text,
+        owner=validated.owner,
         user_email=SYSTEM_USER,
-        due_date=due_date,
-        meeting_id=meeting_id,
-        notes=notes
+        due_date=validated.due_date,
+        meeting_id=validated.meeting_id,
+        notes=validated.notes
     )
 
 
@@ -146,29 +216,49 @@ def update_action(
     due_date: str = None,
     notes: str = None
 ) -> dict:
+    try:
+        ActionId(action_id=action_id)
+        validated = ActionUpdate(
+            action_text=action_text, owner=owner,
+            due_date=due_date, notes=notes
+        )
+    except ValidationError as e:
+        return _validation_error_response(e)
     return actions.update_action(
         action_id=action_id,
         user_email=SYSTEM_USER,
-        action_text=action_text,
-        owner=owner,
-        due_date=due_date,
-        notes=notes
+        action_text=validated.action_text,
+        owner=validated.owner,
+        due_date=validated.due_date,
+        notes=validated.notes
     )
 
 
 @mcp.tool(description="Mark an action as complete. Idempotent - completing an already-complete action is not an error.", annotations=WRITE)
 def complete_action(action_id: int) -> dict:
-    return actions.complete_action(action_id, SYSTEM_USER)
+    try:
+        validated = ActionId(action_id=action_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return actions.complete_action(validated.action_id, SYSTEM_USER)
 
 
 @mcp.tool(description="Park an action (put on hold). Parked actions can be reopened via update_action.", annotations=WRITE)
 def park_action(action_id: int) -> dict:
-    return actions.park_action(action_id, SYSTEM_USER)
+    try:
+        validated = ActionId(action_id=action_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return actions.park_action(validated.action_id, SYSTEM_USER)
 
 
 @mcp.tool(description="Permanently delete an action. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
 def delete_action(action_id: int) -> dict:
-    return actions.delete_action(action_id)
+    try:
+        validated = ActionId(action_id=action_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return actions.delete_action(validated.action_id)
 
 
 # ============================================================================
@@ -177,7 +267,11 @@ def delete_action(action_id: int) -> dict:
 
 @mcp.tool(description="List decisions from meetings. Sorted by created date, most recent first.", annotations=READ_ONLY)
 def list_decisions(meeting_id: int = None, limit: int = 50) -> dict:
-    return decisions.list_decisions(meeting_id=meeting_id, limit=limit)
+    try:
+        validated = DecisionListFilter(meeting_id=meeting_id, limit=limit)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return decisions.list_decisions(meeting_id=validated.meeting_id, limit=validated.limit)
 
 
 @mcp.tool(description="Record a decision made in a meeting.", annotations=WRITE)
@@ -186,14 +280,24 @@ def create_decision(
     decision_text: str,
     context: str = None
 ) -> dict:
+    try:
+        validated = DecisionCreate(
+            meeting_id=meeting_id, decision_text=decision_text, context=context
+        )
+    except ValidationError as e:
+        return _validation_error_response(e)
     return decisions.create_decision(
-        meeting_id=meeting_id,
-        decision_text=decision_text,
+        meeting_id=validated.meeting_id,
+        decision_text=validated.decision_text,
         user_email=SYSTEM_USER,
-        context=context
+        context=validated.context
     )
 
 
 @mcp.tool(description="Permanently delete a decision. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
 def delete_decision(decision_id: int) -> dict:
-    return decisions.delete_decision(decision_id)
+    try:
+        validated = DecisionId(decision_id=decision_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return decisions.delete_decision(validated.decision_id)

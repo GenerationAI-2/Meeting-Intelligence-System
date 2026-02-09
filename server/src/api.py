@@ -4,8 +4,8 @@ from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from starlette.responses import Response
+from .schemas import StatusUpdate
 
 from .database import get_db
 from .tools import meetings, actions, decisions
@@ -232,13 +232,8 @@ async def get_action_endpoint(action_id: int, user: str = Depends(get_current_us
     return result
 
 
-class StatusUpdate(BaseModel):
-    status: str
-
-
 @app.patch("/api/actions/{action_id}/status")
 async def update_action_status_endpoint(action_id: int, update: StatusUpdate, user: str = Depends(get_current_user)):
-    """Update action status."""
     """Update action status."""
     user_email = user # Use the authenticated user's email
     
@@ -256,9 +251,6 @@ async def update_action_status_endpoint(action_id: int, update: StatusUpdate, us
             result = actions.get_action(action_id)
         except Exception as e:
             result = {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
-    else:
-        raise HTTPException(status_code=400, detail="Invalid status")
-    
     if result.get("error"):
         if result["code"] == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])

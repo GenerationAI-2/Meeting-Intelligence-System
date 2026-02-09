@@ -26,6 +26,9 @@ def run_http():
     from starlette.responses import FileResponse, Response
     from starlette.middleware.cors import CORSMiddleware
 
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse as StarletteJSONResponse
+
     from .api import app as api_app  # REST API endpoints
     from .config import get_settings
     from .oauth import router as oauth_router, validate_oauth_token
@@ -45,6 +48,25 @@ def run_http():
 
     # Create main app with lifespan
     app = FastAPI(title="Meeting Intelligence", lifespan=lifespan)
+
+    # Payload size limit (1MB) — reject oversized requests before processing
+    MAX_PAYLOAD_BYTES = 1 * 1024 * 1024
+
+    class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            content_length = request.headers.get('content-length')
+            if content_length and int(content_length) > MAX_PAYLOAD_BYTES:
+                return StarletteJSONResponse(
+                    status_code=413,
+                    content={
+                        "error": True,
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": f"Payload too large. Maximum size is {MAX_PAYLOAD_BYTES // 1024}KB."
+                    }
+                )
+            return await call_next(request)
+
+    app.add_middleware(PayloadSizeLimitMiddleware)
 
     # CORS - include mcp-session-id header
     app.add_middleware(
