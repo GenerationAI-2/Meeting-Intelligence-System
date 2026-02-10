@@ -9,6 +9,7 @@ Client registrations are persisted to database and cached in-memory.
 Authorization codes and access tokens remain in-memory (short-lived).
 """
 
+import html as html_mod
 import logging
 import secrets
 import hashlib
@@ -17,13 +18,14 @@ import uuid
 import jwt
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Form, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
 
 from .config import get_settings
-from .database import save_oauth_client, load_all_oauth_clients
+from .database import save_oauth_client, load_all_oauth_clients, validate_client_token
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,116 @@ def get_jwt_secret() -> str:
 
 
 # ============================================================================
+# REDIRECT URI ALLOWLIST
+# ============================================================================
+
+# Default allowed domains for OAuth redirect URIs.
+# Override via OAUTH_ALLOWED_REDIRECT_DOMAINS env var (comma-separated).
+_DEFAULT_ALLOWED_REDIRECT_DOMAINS = [
+    "claude.ai",
+    "claude.com",
+    "chatgpt.com",
+    "openai.com",
+    "localhost",
+    "127.0.0.1",
+]
+
+
+def _get_allowed_redirect_domains() -> list[str]:
+    """Get allowed redirect URI domains from config or defaults."""
+    settings = get_settings()
+    if settings.oauth_allowed_redirect_domains:
+        return [d.strip() for d in settings.oauth_allowed_redirect_domains.split(",") if d.strip()]
+    return _DEFAULT_ALLOWED_REDIRECT_DOMAINS
+
+
+def _validate_redirect_uri(uri: str) -> bool:
+    """Check if a redirect URI belongs to an allowed domain."""
+    try:
+        parsed = urlparse(uri)
+        hostname = parsed.hostname or ""
+        allowed = _get_allowed_redirect_domains()
+        return any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in allowed
+        )
+    except Exception:
+        return False
+
+
+# ============================================================================
+# MCP TOKEN VALIDATION (reuses DB-backed ClientToken lookup)
+# ============================================================================
+
+def _validate_mcp_token(token: str) -> str | None:
+    """Validate an MCP client token. Returns client email if valid, None if not.
+
+    Uses the same SHA256 hash → ClientToken table lookup as the auth middleware.
+    """
+    if not token:
+        return None
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    result = validate_client_token(token_hash)
+    if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
+        return result["client_email"]
+    return None
+
+
+# ============================================================================
+# CONSENT PAGE HTML
+# ============================================================================
+
+def _render_consent_page(
+    app_name: str,
+    error: str = "",
+    **oauth_params,
+) -> str:
+    """Render the OAuth consent HTML page."""
+    safe_name = html_mod.escape(app_name or "Unknown application")
+
+    error_html = ""
+    if error:
+        error_html = f'<div class="error">{html_mod.escape(error)}</div>'
+
+    hidden = ""
+    for key, value in oauth_params.items():
+        hidden += f'<input type="hidden" name="{html_mod.escape(key)}" value="{html_mod.escape(str(value))}">'
+
+    return f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect to Meeting Intelligence</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}}
+.card{{background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);padding:32px;max-width:420px;width:100%}}
+h1{{font-size:20px;margin-bottom:8px;color:#1a1a1a}}
+.subtitle{{color:#666;font-size:14px;margin-bottom:24px}}
+.app-name{{font-weight:600;color:#333;background:#f0f0f0;padding:2px 8px;border-radius:4px}}
+label{{display:block;font-size:14px;font-weight:500;color:#333;margin-bottom:6px}}
+input[type="password"]{{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;transition:border-color .2s}}
+input:focus{{border-color:#0066cc}}
+.error{{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:16px}}
+button{{width:100%;padding:10px;background:#0066cc;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;margin-top:16px;transition:background .2s}}
+button:hover{{background:#0052a3}}
+</style>
+</head><body>
+<div class="card">
+<h1>Connect to Meeting Intelligence</h1>
+<p class="subtitle"><span class="app-name">{safe_name}</span> wants to access your meeting data.</p>
+{error_html}
+<form method="post" action="/oauth/authorize">
+<label for="token">Enter your access token</label>
+<input type="password" id="token" name="token" placeholder="Paste your MCP client token" required autocomplete="off">
+{hidden}
+<button type="submit">Connect</button>
+</form>
+</div>
+</body></html>"""
+
+
+# ============================================================================
 # WELL-KNOWN METADATA ENDPOINTS
 # ============================================================================
 
@@ -130,11 +242,19 @@ class ClientRegistrationRequest(BaseModel):
 
 @router.post("/oauth/register")
 async def register_client(request: ClientRegistrationRequest):
-    """Register a new OAuth client (used by ChatGPT).
+    """Register a new OAuth client (used by ChatGPT/Claude).
 
-    ChatGPT calls this automatically to register itself before starting OAuth flow.
-    Persists to database and updates in-memory cache.
+    ChatGPT and Claude call this automatically to register before starting OAuth flow.
+    Validates redirect_uris against allowed domains, then persists to database.
     """
+    # Validate all redirect URIs against allowed domains
+    rejected = [uri for uri in request.redirect_uris if not _validate_redirect_uri(uri)]
+    if rejected:
+        raise HTTPException(400, {
+            "error": "invalid_redirect_uri",
+            "error_description": "redirect_uri must be from an approved AI platform domain",
+        })
+
     client_id = str(uuid.uuid4())
     client_secret = secrets.token_urlsafe(32)
 
@@ -169,45 +289,94 @@ async def register_client(request: ClientRegistrationRequest):
 # AUTHORIZATION ENDPOINT (with PKCE)
 # ============================================================================
 
-@router.get("/oauth/authorize")
-async def authorize(
+def _validate_authorize_params(
     response_type: str,
     client_id: str,
     redirect_uri: str,
-    scope: str = "mcp:read mcp:write",
-    state: str = "",
-    code_challenge: str = "",
-    code_challenge_method: str = "S256"
-):
-    """Authorization endpoint with PKCE support.
-
-    For MVP: auto-approves all requests (no consent screen).
-    Production: would show a consent screen asking user to approve.
-    """
-    # Validate client exists
+    code_challenge: str,
+    code_challenge_method: str,
+) -> dict:
+    """Validate OAuth authorize parameters. Returns the client dict or raises HTTPException."""
     client = _get_client(client_id)
     if not client:
         raise HTTPException(400, f"Invalid client_id: {client_id}")
 
-    # Validate redirect_uri
     if redirect_uri not in client["redirect_uris"]:
         raise HTTPException(400, f"Invalid redirect_uri: {redirect_uri}")
 
-    # Validate response_type
     if response_type != "code":
         raise HTTPException(400, "Only response_type=code is supported")
 
-    # Validate PKCE (required for ChatGPT)
     if code_challenge_method != "S256":
         raise HTTPException(400, "Only S256 code_challenge_method is supported")
 
     if not code_challenge:
         raise HTTPException(400, "code_challenge is required")
 
-    # Generate authorization code
+    return client
+
+
+@router.get("/oauth/authorize")
+async def authorize_get(
+    response_type: str,
+    client_id: str,
+    redirect_uri: str,
+    scope: str = "mcp:read mcp:write",
+    state: str = "",
+    code_challenge: str = "",
+    code_challenge_method: str = "S256",
+):
+    """Authorization endpoint — renders consent page requiring MCP token."""
+    client = _validate_authorize_params(
+        response_type, client_id, redirect_uri, code_challenge, code_challenge_method
+    )
+
+    return HTMLResponse(_render_consent_page(
+        app_name=client.get("client_name", "Unknown application"),
+        response_type=response_type,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        scope=scope,
+        state=state,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+    ))
+
+
+@router.post("/oauth/authorize")
+async def authorize_post(
+    response_type: str = Form(...),
+    client_id: str = Form(...),
+    redirect_uri: str = Form(...),
+    scope: str = Form("mcp:read mcp:write"),
+    state: str = Form(""),
+    code_challenge: str = Form(""),
+    code_challenge_method: str = Form("S256"),
+    token: str = Form(...),
+):
+    """Authorization endpoint — validates MCP token, then issues auth code."""
+    client = _validate_authorize_params(
+        response_type, client_id, redirect_uri, code_challenge, code_challenge_method
+    )
+
+    # Validate the MCP client token
+    client_email = _validate_mcp_token(token)
+    if not client_email:
+        return HTMLResponse(_render_consent_page(
+            app_name=client.get("client_name", "Unknown application"),
+            error="Invalid token. Please check your access token and try again.",
+            response_type=response_type,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            scope=scope,
+            state=state,
+            code_challenge=code_challenge,
+            code_challenge_method=code_challenge_method,
+        ))
+
+    # Token valid — generate authorization code
     auth_code = secrets.token_urlsafe(32)
 
-    # Store pending auth code with PKCE challenge
     pending_auth_codes[auth_code] = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -215,11 +384,11 @@ async def authorize(
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
         "created_at": datetime.utcnow(),
-        "expires_at": datetime.utcnow() + timedelta(minutes=10)
+        "expires_at": datetime.utcnow() + timedelta(minutes=10),
     }
 
-    # For MVP: auto-approve and redirect back with code
-    # Build redirect URL with code and state
+    logger.info("OAuth authorized for client %s by %s", client_id, client_email)
+
     redirect_url = f"{redirect_uri}?code={auth_code}"
     if state:
         redirect_url += f"&state={state}"
