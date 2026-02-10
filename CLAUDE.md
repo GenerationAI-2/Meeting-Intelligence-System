@@ -1,6 +1,6 @@
 # Meeting Intelligence System - Agent Context
 
-**Last Updated:** 2026-02-05
+**Last Updated:** 2026-02-10
 **Project Status:** BUILD
 **Owner:** Caleb Lucas
 
@@ -32,7 +32,7 @@ npm run dev  # Run on :5173
 **Required environment variables (in `.env.deploy`):**
 - `AZURE_SQL_SERVER` — Azure SQL server hostname
 - `AZURE_SQL_DATABASE` — Database name
-- `MCP_AUTH_TOKENS` — JSON map of token hashes to emails
+- `MCP_AUTH_TOKENS` — (Legacy) JSON map of token hashes to emails. New deployments use DB-backed `ClientToken` table instead.
 - `ALLOWED_USERS` — Comma-separated emails for web UI access
 - `CORS_ORIGINS` — Allowed CORS origins
 - `JWT_SECRET` — Secret for OAuth JWT tokens
@@ -71,9 +71,13 @@ web/src/
 | `server/src/tools/meetings.py` | Meeting CRUD + delete (cascades to actions/decisions) |
 | `server/src/config.py` | All environment variable handling |
 | `server/src/database.py` | Azure SQL connection with managed identity |
-| `deploy.sh` | Deployment script for all environments |
+| `deploy.sh` | Legacy deployment script (team/demo) |
+| `infra/deploy-bicep.sh` | Bicep deployment script (new environments) |
+| `infra/parameters/*.bicepparam` | Per-environment Bicep parameters (committed to git) |
+| `server/scripts/manage_tokens.py` | CLI for creating/revoking/rotating client tokens |
 | `.env.deploy` | Secrets (not in git) |
 | `schema.sql` | Database schema definition |
+| `server/migrations/002_client_tokens.sql` | ClientToken + OAuthClient table migration |
 
 ---
 
@@ -84,7 +88,8 @@ web/src/
 - **Status values**: "Open", "Complete", "Parked" (exact strings)
 - **Tags**: Comma-separated lowercase strings (e.g., "planning, engineering")
 - **Attendees**: Comma-separated email addresses
-- **Auth tokens**: Hash IS the token - users send the SHA256 hash, not plaintext
+- **Auth tokens (new — DB-backed)**: Client receives a plaintext token. Middleware hashes it once with SHA256 and looks up the hash in `ClientToken` table. DB stores `SHA256(plaintext)` — single hash. The old `MCP_AUTH_TOKENS` env var pattern (hash IS the token) is legacy and only used by the `migrate` command.
+- **Naming conventions**: Container Apps are `mi-${environmentName}`, resource groups are `meeting-intelligence-${environmentName}-rg`, images are `mi-${environmentName}:<tag>`
 - **Managed Identity**: DB auth uses Azure MI SID based on App Registration's Application (Client) ID
 
 ---
@@ -98,6 +103,12 @@ web/src/
 | Git commit tag for deploys | Same tag = no new revision; need unique tag per deploy | 2026-02-03 |
 | FastAPI route param name mismatch | Route `{path:path}` with function arg `_path` - FastAPI interprets as query param, causing JSON error on page refresh. Names must match. | 2026-02-05 |
 | YAML update for health probes | `az containerapp update --yaml` wipes ALL env vars. Symptom: 401 errors, double-slash in OpenID config URL. Fix: configure probes once via Portal, not in deploy.sh. | 2026-02-05 |
+| `.bicepparam` with `using` + CLI `--parameters` | Bicep files with a `using` directive reject CLI `--parameters` overrides. Use `readEnvironmentVariable()` in the `.bicepparam` file for dynamic/secret values instead. | 2026-02-10 |
+| Bicep ACR Pull role assignment | `container-app.bicep` uses `identity: 'system'` for ACR registry config, but this does NOT create an ACR Pull role assignment. Must manually assign AcrPull to the managed identity principal after first deploy. | 2026-02-10 |
+| Bicep identity module on redeploy | `identity.bicep` assigns Key Vault Secrets User role. If already assigned (e.g., manually), redeploy fails with `RoleAssignmentExists`. Benign — other modules still succeed. | 2026-02-10 |
+| Container App readiness after DB user creation | Readiness probe caches "no DB access" state. After creating the managed identity DB user, must restart the Container App revision for it to pick up the new permissions. | 2026-02-10 |
+| `--spa-redirect-uris` on `az ad app update` | This flag doesn't exist. Use `--set spa='{"redirectUris":[...]}'` instead. | 2026-02-10 |
+| Streamable HTTP curl without Accept header | `/mcp` endpoint returns "Not Acceptable" without `-H "Accept: application/json, text/event-stream"`. | 2026-02-10 |
 
 ---
 
@@ -115,7 +126,7 @@ web/src/
 - SSE transport (`/sse`) for Claude Desktop
 - Attendee and tag filtering on meetings
 - Transcript storage and search
-- Two environments: team (internal), demo (Mark sign-off)
+- Three environments: team (internal), demo (Mark sign-off), marshall (first client)
 - **Observability (team instance):**
   - Application Insights telemetry
   - Structured logging (no print statements)
@@ -243,8 +254,9 @@ If you don't have access to Second Brain folder:
 |-------------|---------|----------|-------|---------|
 | Team | meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io | meeting-intelligence-team | 0-10 | Internal use |
 | Demo | meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io | meeting-intelligence | 0-10 | Mark sign-off |
+| Marshall | mi-marshall.delightfulpebble-aa90cd5c.australiaeast.azurecontainerapps.io | mi-marshall | 1-10 | First client (John Marshall) |
 
-**Estimated monthly cost:** ~$33 AUD (both scale-to-zero)
+**Estimated monthly cost:** ~$33 AUD (team + demo scale-to-zero), Marshall is always-on (minReplicas=1)
 
 ---
 
