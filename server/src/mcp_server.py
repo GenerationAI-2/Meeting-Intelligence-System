@@ -1,5 +1,7 @@
 """Meeting Intelligence MCP Server - FastMCP Implementation"""
 
+import contextvars
+
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
@@ -30,8 +32,21 @@ mcp = FastMCP(
     transport_security=transport_security
 )
 
-# System user for MCP calls (TODO: extract from auth in future)
-SYSTEM_USER = "system@generationai.co.nz"
+# Contextvar set by auth middleware in main.py — carries the authenticated
+# user email through to MCP tool handlers without explicit parameter passing.
+_mcp_user_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "mcp_user", default="system@generationai.co.nz"
+)
+
+
+def set_mcp_user(email: str) -> None:
+    """Set the authenticated MCP user for the current request."""
+    _mcp_user_var.set(email)
+
+
+def get_mcp_user() -> str:
+    """Get the authenticated MCP user. Falls back to system@ for stdio/unauthenticated."""
+    return _mcp_user_var.get()
 
 
 def _validation_error_response(e: ValidationError) -> dict:
@@ -106,7 +121,7 @@ def create_meeting(
     return meetings.create_meeting(
         title=validated.title,
         meeting_date=validated.meeting_date,
-        user_email=SYSTEM_USER,
+        user_email=get_mcp_user(),
         attendees=validated.attendees,
         summary=validated.summary,
         transcript=validated.transcript,
@@ -135,7 +150,7 @@ def update_meeting(
         return _validation_error_response(e)
     return meetings.update_meeting(
         meeting_id=meeting_id,
-        user_email=SYSTEM_USER,
+        user_email=get_mcp_user(),
         title=validated.title,
         summary=validated.summary,
         attendees=validated.attendees,
@@ -201,7 +216,7 @@ def create_action(
     return actions.create_action(
         action_text=validated.action_text,
         owner=validated.owner,
-        user_email=SYSTEM_USER,
+        user_email=get_mcp_user(),
         due_date=validated.due_date,
         meeting_id=validated.meeting_id,
         notes=validated.notes
@@ -226,7 +241,7 @@ def update_action(
         return _validation_error_response(e)
     return actions.update_action(
         action_id=action_id,
-        user_email=SYSTEM_USER,
+        user_email=get_mcp_user(),
         action_text=validated.action_text,
         owner=validated.owner,
         due_date=validated.due_date,
@@ -240,7 +255,7 @@ def complete_action(action_id: int) -> dict:
         validated = ActionId(action_id=action_id)
     except ValidationError as e:
         return _validation_error_response(e)
-    return actions.complete_action(validated.action_id, SYSTEM_USER)
+    return actions.complete_action(validated.action_id, get_mcp_user())
 
 
 @mcp.tool(description="Park an action (put on hold). Parked actions can be reopened via update_action.", annotations=WRITE)
@@ -249,7 +264,7 @@ def park_action(action_id: int) -> dict:
         validated = ActionId(action_id=action_id)
     except ValidationError as e:
         return _validation_error_response(e)
-    return actions.park_action(validated.action_id, SYSTEM_USER)
+    return actions.park_action(validated.action_id, get_mcp_user())
 
 
 @mcp.tool(description="Permanently delete an action. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
@@ -289,7 +304,7 @@ def create_decision(
     return decisions.create_decision(
         meeting_id=validated.meeting_id,
         decision_text=validated.decision_text,
-        user_email=SYSTEM_USER,
+        user_email=get_mcp_user(),
         context=validated.context
     )
 

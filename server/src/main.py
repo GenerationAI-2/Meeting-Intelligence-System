@@ -7,7 +7,7 @@ import contextlib
 import time as _time
 
 from .logging_config import configure_logging, get_logger
-from .mcp_server import mcp
+from .mcp_server import mcp, set_mcp_user
 
 # Configure logging at module load (before any other imports that might log)
 configure_logging()
@@ -127,8 +127,10 @@ def run_http():
         # Check for path-based token: /mcp/{token} (for Copilot)
         if path.startswith("/mcp/") and len(path) > 5:
             path_token = path[5:]  # Extract token from path
-            if validate_mcp_token(path_token):
+            email = validate_mcp_token(path_token)
+            if email:
                 token = path_token
+                set_mcp_user(email)
                 # Rewrite path to /mcp for the route handler
                 request.scope["path"] = "/mcp"
 
@@ -146,17 +148,26 @@ def run_http():
             if auth.startswith("Bearer "):
                 bearer_token = auth[7:]
                 # First check if it's an MCP client token
-                if validate_mcp_token(bearer_token):
+                email = validate_mcp_token(bearer_token)
+                if email:
                     token = bearer_token
+                    set_mcp_user(email)
                 else:
                     # Try validating as OAuth token (for ChatGPT)
                     oauth_payload = validate_oauth_token(bearer_token)
                     if oauth_payload:
-                        # Valid OAuth token - allow request
+                        # Valid OAuth token — attribute to OAuth client_id
+                        set_mcp_user(f"oauth:{oauth_payload.get('sub', 'unknown')}")
                         return await call_next(request)
 
-        if not token or not validate_mcp_token(token):
+        if not token:
             return Response("Unauthorized", status_code=401)
+
+        # For query param / X-API-Key tokens, resolve email if not already set
+        email = validate_mcp_token(token)
+        if not email:
+            return Response("Unauthorized", status_code=401)
+        set_mcp_user(email)
 
         return await call_next(request)
 
@@ -205,6 +216,10 @@ def run_http():
     static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
     if os.path.exists(static_dir):
         app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+
+        @app.get("/favicon.svg")
+        async def serve_favicon():
+            return FileResponse(os.path.join(static_dir, "favicon.svg"), media_type="image/svg+xml")
 
         @app.get("/")
         async def serve_root():
