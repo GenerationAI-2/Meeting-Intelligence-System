@@ -13,13 +13,15 @@ HTML_TAG_PATTERN = re.compile(r'</?[a-zA-Z][^>]*>')
 
 
 def strip_html_tags(text: str) -> str:
-    """Strip HTML tags from text to prevent stored XSS.
+    """Strip HTML tags and null bytes from text.
 
-    Matches actual HTML tags (e.g. <script>, <img onerror=...>) but preserves
-    legitimate angle bracket usage (e.g. "meeting < 30 mins", "a < b > c").
+    Strips HTML tags (e.g. <script>, <img onerror=...>) to prevent stored XSS
+    while preserving legitimate angle brackets (e.g. "meeting < 30 mins").
+    Also strips null bytes which have no legitimate purpose in text fields.
     """
     if not text:
         return text
+    text = text.replace('\x00', '')
     return HTML_TAG_PATTERN.sub('', text)
 
 
