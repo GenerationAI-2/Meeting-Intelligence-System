@@ -156,6 +156,20 @@ def run_http():
             logger.warning("Rejected MCP request with invalid Origin: %s", origin)
             return Response("Forbidden", status_code=403)
 
+        # MCP-Protocol-Version header validation (Streamable HTTP only).
+        # The spec requires clients to include this header on POST requests.
+        _SUPPORTED_MCP_VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+        if path.startswith("/mcp") and request.method == "POST":
+            proto_version = request.headers.get("mcp-protocol-version")
+            if proto_version and proto_version not in _SUPPORTED_MCP_VERSIONS:
+                return StarletteJSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "unsupported_protocol_version",
+                        "supported_versions": sorted(_SUPPORTED_MCP_VERSIONS),
+                    }
+                )
+
         token = None
 
         # Check for path-based token: /mcp/{token} (for Copilot)
