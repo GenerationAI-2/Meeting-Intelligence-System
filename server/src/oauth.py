@@ -216,16 +216,18 @@ button:hover{{background:#0052a3}}
 
 @router.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource():
-    """RFC 8414 - Protected Resource Metadata.
+    """RFC 9728 - OAuth 2.0 Protected Resource Metadata.
 
-    ChatGPT uses this to discover which authorization server protects this resource.
+    MCP spec 2025-11-25 requires this endpoint. Clients (ChatGPT, Claude)
+    use it to discover which authorization server protects this resource.
     """
     base_url = get_base_url()
     return {
         "resource": base_url,
         "authorization_servers": [base_url],
         "scopes_supported": ["mcp:read", "mcp:write"],
-        "bearer_methods_supported": ["header"]
+        "bearer_methods_supported": ["header"],
+        "resource_documentation": f"{base_url}/health",
     }
 
 
