@@ -41,6 +41,10 @@ RUN apt-get update && \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
+# Create non-root application user
+RUN groupadd -g 1000 appuser && \
+    useradd -u 1000 -g 1000 -m -s /bin/bash appuser
+
 WORKDIR /app
 
 # Copy project definition and lockfile
@@ -56,11 +60,13 @@ COPY server/src/ src/
 # Copy built frontend from Stage 1
 COPY --from=builder /app/dist/ static/
 
-# Expose port
+# Set ownership of app directory to non-root user
+RUN chown -R appuser:appuser /app
+
 EXPOSE 8000
 
-# Run the API server
-ENV PYTHONUNBUFFERED=1
+# Run as non-root user
+USER appuser
 
-# Run the API server
+ENV PYTHONUNBUFFERED=1
 CMD ["uv", "run", "python", "-m", "src.main", "--http"]
