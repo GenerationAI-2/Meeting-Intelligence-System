@@ -108,7 +108,7 @@ def run_http():
         allow_origins=settings.get_cors_origins_list(),
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE", "OPTIONS", "PATCH"],
-        allow_headers=["*", "mcp-protocol-version", "mcp-session-id", "Authorization", "X-API-Key"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-API-Key", "mcp-protocol-version", "mcp-session-id"],
         expose_headers=["mcp-session-id"],
     )
 
