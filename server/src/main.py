@@ -121,6 +121,7 @@ def run_http():
             super().__init__(app)
             self._windows: dict[str, list[float]] = {}
             self._last_cleanup = _time.monotonic()
+            self._lock = asyncio.Lock()
 
         def _classify(self, path: str):
             if any(path.startswith(p) for p in self.EXEMPT_PREFIXES):
@@ -159,44 +160,46 @@ def run_http():
             client_key = self._get_client_key(request, tier)
             now = _time.monotonic()
 
-            if client_key not in self._windows:
-                self._windows[client_key] = []
-            timestamps = self._windows[client_key]
+            async with self._lock:
+                if client_key not in self._windows:
+                    self._windows[client_key] = []
+                timestamps = self._windows[client_key]
 
-            cutoff = now - window_seconds
-            while timestamps and timestamps[0] < cutoff:
-                timestamps.pop(0)
+                cutoff = now - window_seconds
+                while timestamps and timestamps[0] < cutoff:
+                    timestamps.pop(0)
 
-            if len(timestamps) >= max_requests:
-                retry_after = int(timestamps[0] - cutoff) + 1
-                logger.warning("Rate limit hit: %s (%d/%d in %ds)", client_key, len(timestamps), max_requests, window_seconds)
-                return StarletteJSONResponse(
-                    status_code=429,
-                    content={
-                        "error": True,
-                        "code": "RATE_LIMITED",
-                        "message": f"Rate limit exceeded. Try again in {retry_after}s.",
-                    },
-                    headers={
-                        "Retry-After": str(retry_after),
-                        "X-RateLimit-Limit": str(max_requests),
-                        "X-RateLimit-Remaining": "0",
-                    }
-                )
+                if len(timestamps) >= max_requests:
+                    retry_after = int(timestamps[0] - cutoff) + 1
+                    logger.warning("Rate limit hit: %s (%d/%d in %ds)", client_key, len(timestamps), max_requests, window_seconds)
+                    return StarletteJSONResponse(
+                        status_code=429,
+                        content={
+                            "error": True,
+                            "code": "RATE_LIMITED",
+                            "message": f"Rate limit exceeded. Try again in {retry_after}s.",
+                        },
+                        headers={
+                            "Retry-After": str(retry_after),
+                            "X-RateLimit-Limit": str(max_requests),
+                            "X-RateLimit-Remaining": "0",
+                        }
+                    )
 
-            timestamps.append(now)
+                timestamps.append(now)
+                remaining = max_requests - len(timestamps)
 
-            # Periodic cleanup of stale entries (every 5 minutes)
-            if now - self._last_cleanup > 300:
-                self._last_cleanup = now
-                max_window = max(w for _, w in self.TIERS.values())
-                stale = [k for k, v in self._windows.items() if not v or v[-1] < now - max_window]
-                for k in stale:
-                    del self._windows[k]
+                # Periodic cleanup of stale entries (every 5 minutes)
+                if now - self._last_cleanup > 300:
+                    self._last_cleanup = now
+                    max_window = max(w for _, w in self.TIERS.values())
+                    stale = [k for k, v in self._windows.items() if not v or v[-1] < now - max_window]
+                    for k in stale:
+                        del self._windows[k]
 
             response = await call_next(request)
             response.headers["X-RateLimit-Limit"] = str(max_requests)
-            response.headers["X-RateLimit-Remaining"] = str(max_requests - len(timestamps))
+            response.headers["X-RateLimit-Remaining"] = str(remaining)
             return response
 
     app.add_middleware(RateLimitMiddleware)
