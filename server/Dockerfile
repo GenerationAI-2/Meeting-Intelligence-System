@@ -43,11 +43,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 WORKDIR /app
 
-# Copy requirements
-COPY server/requirements.txt .
+# Copy project definition and lockfile
+COPY server/pyproject.toml server/uv.lock ./
 
-# Install dependencies
-RUN uv pip install --system -r requirements.txt
+# Install dependencies from lockfile (exact pinned versions)
+RUN uv sync --frozen --no-dev --no-editable
 
 # Copy source code
 ARG CACHEBUST=1
@@ -63,4 +63,4 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 
 # Run the API server
-CMD ["sh", "-c", "echo '🚀 STARTING DEPLOYMENT V11 (Fix Auth Path)' && python -m src.main --http"]
+CMD ["uv", "run", "python", "-m", "src.main", "--http"]
