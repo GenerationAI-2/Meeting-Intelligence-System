@@ -349,8 +349,13 @@ async def authorize_get(
     state: str = "",
     code_challenge: str = "",
     code_challenge_method: str = "S256",
+    resource: str = "",
 ):
     """Authorization endpoint — renders consent page requiring MCP token."""
+    # RFC 8707: validate resource indicator if provided
+    if resource and resource != get_base_url():
+        raise HTTPException(400, "Invalid resource indicator")
+
     client = _validate_authorize_params(
         response_type, client_id, redirect_uri, code_challenge, code_challenge_method
     )
@@ -364,6 +369,7 @@ async def authorize_get(
         state=state,
         code_challenge=code_challenge,
         code_challenge_method=code_challenge_method,
+        resource=resource,
     ))
 
 
@@ -376,9 +382,13 @@ async def authorize_post(
     state: str = Form(""),
     code_challenge: str = Form(""),
     code_challenge_method: str = Form("S256"),
+    resource: str = Form(""),
     token: str = Form(...),
 ):
     """Authorization endpoint — validates MCP token, then issues auth code."""
+    if resource and resource != get_base_url():
+        raise HTTPException(400, "Invalid resource indicator")
+
     client = _validate_authorize_params(
         response_type, client_id, redirect_uri, code_challenge, code_challenge_method
     )
