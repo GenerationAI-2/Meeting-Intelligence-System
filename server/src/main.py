@@ -102,6 +102,101 @@ def run_http():
 
     app.add_middleware(PayloadSizeLimitMiddleware)
 
+    # Rate limiting middleware — tiered per endpoint category
+    # MCP: 120/min per-token (rapid tool calls), OAuth: 20/min per-IP,
+    # API: 60/min per-IP, health/well-known: exempt
+    class RateLimitMiddleware(BaseHTTPMiddleware):
+        TIERS = {
+            "mcp":   (120, 60),  # 120 req/min — MCP tool calls
+            "oauth": (20, 60),   # 20 req/min — auth endpoints
+            "api":   (60, 60),   # 60 req/min — REST API
+        }
+        EXEMPT_PREFIXES = ("/health", "/.well-known")
+
+        def __init__(self, app):
+            super().__init__(app)
+            self._windows: dict[str, list[float]] = {}
+            self._last_cleanup = _time.monotonic()
+
+        def _classify(self, path: str):
+            if any(path.startswith(p) for p in self.EXEMPT_PREFIXES):
+                return None
+            if path.startswith("/mcp") or path.startswith("/sse") or path.startswith("/messages"):
+                return "mcp"
+            if path.startswith("/oauth"):
+                return "oauth"
+            if path.startswith("/api"):
+                return "api"
+            return None
+
+        def _get_client_key(self, request, tier: str) -> str:
+            if tier == "mcp":
+                token = (
+                    request.query_params.get("token")
+                    or request.headers.get("X-API-Key")
+                    or ""
+                )
+                auth_header = request.headers.get("Authorization", "")
+                if not token and auth_header.startswith("Bearer "):
+                    token = auth_header[7:]
+                if not token and request.url.path.startswith("/mcp/"):
+                    token = request.url.path[5:]
+                if token:
+                    return f"mcp:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
+            client_ip = request.client.host if request.client else "unknown"
+            return f"{tier}:{client_ip}"
+
+        async def dispatch(self, request, call_next):
+            tier = self._classify(request.url.path)
+            if tier is None:
+                return await call_next(request)
+
+            max_requests, window_seconds = self.TIERS[tier]
+            client_key = self._get_client_key(request, tier)
+            now = _time.monotonic()
+
+            if client_key not in self._windows:
+                self._windows[client_key] = []
+            timestamps = self._windows[client_key]
+
+            cutoff = now - window_seconds
+            while timestamps and timestamps[0] < cutoff:
+                timestamps.pop(0)
+
+            if len(timestamps) >= max_requests:
+                retry_after = int(timestamps[0] - cutoff) + 1
+                logger.warning("Rate limit hit: %s (%d/%d in %ds)", client_key, len(timestamps), max_requests, window_seconds)
+                return StarletteJSONResponse(
+                    status_code=429,
+                    content={
+                        "error": True,
+                        "code": "RATE_LIMITED",
+                        "message": f"Rate limit exceeded. Try again in {retry_after}s.",
+                    },
+                    headers={
+                        "Retry-After": str(retry_after),
+                        "X-RateLimit-Limit": str(max_requests),
+                        "X-RateLimit-Remaining": "0",
+                    }
+                )
+
+            timestamps.append(now)
+
+            # Periodic cleanup of stale entries (every 5 minutes)
+            if now - self._last_cleanup > 300:
+                self._last_cleanup = now
+                max_window = max(w for _, w in self.TIERS.values())
+                stale = [k for k, v in self._windows.items() if not v or v[-1] < now - max_window]
+                for k in stale:
+                    del self._windows[k]
+
+            response = await call_next(request)
+            response.headers["X-RateLimit-Limit"] = str(max_requests)
+            response.headers["X-RateLimit-Remaining"] = str(max_requests - len(timestamps))
+            return response
+
+    app.add_middleware(RateLimitMiddleware)
+
     # Security headers middleware
     class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
