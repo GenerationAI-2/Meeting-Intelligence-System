@@ -23,7 +23,7 @@ param logAnalyticsWorkspaceId string
 param minReplicas int
 
 @description('Alert notification email')
-param alertEmail string = 'caleb.lucas@accretiveai.com'
+param alertEmail string = 'caleb.lucas@generationai.co.nz'
 
 // === ACTION GROUP ===
 

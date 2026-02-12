@@ -100,8 +100,10 @@ deploy_env() {
         return 1
     fi
 
-    # For environments using readEnvironmentVariable() in bicepparam
+    # Export env vars for readEnvironmentVariable() in bicepparam files
     export CONTAINER_IMAGE_TAG="${IMAGE_TAG}"
+    export JWT_SECRET
+    export APPLICATIONINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
 
     az group create \
         --name "$rg" \
@@ -113,9 +115,6 @@ deploy_env() {
         --resource-group "$rg" \
         --template-file "${SCRIPT_DIR}/main.bicep" \
         --parameters "$param_file" \
-        --parameters containerImageTag="$IMAGE_TAG" \
-        --parameters jwtSecret="$JWT_SECRET" \
-        --parameters appInsightsConnection="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}" \
         --output none 2>&1; then
         echo "  Deploy: OK"
     else

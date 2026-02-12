@@ -44,14 +44,16 @@ if [ -z "${JWT_SECRET:-}" ]; then
     read -sp "JWT_SECRET: " JWT_SECRET; echo
 fi
 
-# App Insights connection is optional — monitoring module auto-generates one
-APP_INSIGHTS_CONN="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
+# Export env vars for readEnvironmentVariable() in .bicepparam files
+export CONTAINER_IMAGE_TAG="$IMAGE_TAG"
+export JWT_SECRET
+export APPLICATIONINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
 
 # Validate parameter file exists
 PARAM_FILE="${SCRIPT_DIR}/parameters/${ENV}.bicepparam"
 if [ ! -f "$PARAM_FILE" ]; then
     echo "WARNING: No parameter file at ${PARAM_FILE}"
-    echo "Using team.bicepparam as base (override with CLI params if needed)"
+    echo "Using team.bicepparam as base"
     PARAM_FILE="${SCRIPT_DIR}/parameters/team.bicepparam"
 fi
 
@@ -71,9 +73,6 @@ az deployment group create \
     --resource-group "$RESOURCE_GROUP" \
     --template-file "${SCRIPT_DIR}/main.bicep" \
     --parameters "$PARAM_FILE" \
-    --parameters containerImageTag="$IMAGE_TAG" \
-    --parameters jwtSecret="$JWT_SECRET" \
-    --parameters appInsightsConnection="$APP_INSIGHTS_CONN" \
     --verbose
 
 # Output results

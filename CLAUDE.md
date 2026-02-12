@@ -1,7 +1,7 @@
 # Meeting Intelligence System - Agent Context
 
-**Last Updated:** 2026-02-10
-**Project Status:** BUILD
+**Last Updated:** 2026-02-12
+**Project Status:** SHAPE (Phase 3)
 **Owner:** Caleb Lucas
 
 ---
@@ -26,7 +26,7 @@ npm install
 npm run dev  # Run on :5173
 
 # Deploy
-./deploy.sh prod  # or dev/team
+./infra/deploy-bicep.sh marshall  # or team/demo
 ```
 
 **Required environment variables (in `.env.deploy`):**
@@ -109,54 +109,79 @@ web/src/
 | Container App readiness after DB user creation | Readiness probe caches "no DB access" state. After creating the managed identity DB user, must restart the Container App revision for it to pick up the new permissions. | 2026-02-10 |
 | `--spa-redirect-uris` on `az ad app update` | This flag doesn't exist. Use `--set spa='{"redirectUris":[...]}'` instead. | 2026-02-10 |
 | Streamable HTTP curl without Accept header | `/mcp` endpoint returns "Not Acceptable" without `-H "Accept: application/json, text/event-stream"`. | 2026-02-10 |
+| Azure AD `accessTokenAcceptedVersion: null` | New App Registrations default to v1 tokens (issuer `sts.windows.net`). `fastapi-azure-auth` expects v2 (issuer `login.microsoftonline.com/.../v2.0`). Fix: `az ad app update --id <id> --set api='{"requestedAccessTokenVersion": 2}'`. Symptom: 401 "Invalid issuer". | 2026-02-11 |
+| Bicep full deploy on pre-Bicep envs | Team/demo were created before Bicep IaC. Full Bicep deploy creates new SQL servers, Container App Environments, etc. instead of using existing shared infra. Fix: use `az containerapp update` for image deploys; deploy alerts module standalone. | 2026-02-12 |
+| MCP SDK `enable_dns_rebinding_protection=True` with empty `allowed_hosts` | SDK v1.8+ applies host validation at route handler level (not just middleware). Empty allowed_hosts = all requests get 421. Fix: disable in SDK, enforce Origin validation in custom middleware. | 2026-02-12 |
+| Docker build without VITE build args | React compiles with `your-tenant-id` placeholder if `--build-arg VITE_*` not passed. Must include `--build-arg VITE_SPA_CLIENT_ID=... VITE_API_CLIENT_ID=... VITE_AZURE_TENANT_ID=... VITE_API_URL=/api` in every ACR build. | 2026-02-12 |
+| OAuth resource indicator exact match | Claude sends resource URI with path (e.g., `/mcp`). Exact string match against `OAUTH_BASE_URL` fails. Fix: compare scheme+host only (origin-based matching). | 2026-02-12 |
 
 ---
 
 ## Current State
 
-**What's working:**
-- Full CRUD for meetings, actions, decisions via MCP and web UI
-- Delete operations for all entities (including cascade delete for meetings)
-- Azure AD authentication for web UI
-- MCP authentication (multiple methods):
-  - Token auth (query param / Bearer header) for Claude
-  - Path-based token auth for Copilot (`/mcp/{token}`)
-  - OAuth 2.1 with PKCE for ChatGPT (team instance only)
-- Streamable HTTP transport (`/mcp`) for Copilot and ChatGPT
-- SSE transport (`/sse`) for Claude Desktop
-- Attendee and tag filtering on meetings
-- Transcript storage and search
-- Three environments: team (internal), demo (Mark sign-off), marshall (first client)
-- **Observability (team instance):**
-  - Application Insights telemetry
-  - Structured logging (no print statements)
-  - Health probes (Liveness + Readiness)
-  - Azure SQL Auditing (90-day retention)
-- **Documentation package complete** (10 docs in `/docs`):
-  - system-overview.md, user-guide.md, platform-setup.md
-  - architecture.md, security.md, deployment-guide.md
-  - admin-database.md, user-admin.md, cost-summary.md, troubleshooting.md
+**Phases:**
+- Phase 1: SHIPPED (Jan 2026) — Core CRUD, MCP, web UI
+- Phase 2: CLOSED (5-12 Feb 2026) — Production hardening, IaC, auth refactor, tenant isolation, OAuth
+- Phase 3: SHAPING — Productisation (workflows, skills, documentation, onboarding)
 
-**What's in progress (Phase 2 Days 6-10):**
-- ChatGPT MCP testing (OAuth implemented on team instance, needs end-to-end testing)
-- Mark sign-off
+**What's working:**
+- 16 MCP tools for meetings (6), actions (7), decisions (3)
+- 5 database tables: Meeting, Action, Decision, ClientToken, OAuthClient + `_MigrationHistory` tracking table
+- 4 transport methods: Streamable HTTP (`/mcp`), SSE (`/sse`), stdio (local), REST (`/api/*`)
+- Full CRUD for meetings, actions, decisions via MCP tools. Web UI is read-only for creation (no create/edit forms); only action status updates are supported in UI.
+- Delete operations for all entities (cascade delete for meetings done in application code, not FK constraints)
+- Azure AD authentication for web UI (with email whitelist)
+- MCP authentication (multiple methods):
+  - Token auth (query param / Bearer header / X-API-Key) for Claude
+  - Path-based token auth for Copilot (`/mcp/{token}`)
+  - OAuth 2.1 with DCR + PKCE for ChatGPT (hardened: redirect URI allowlist + token-gated consent + origin-based resource indicator matching)
+- DB-backed client tokens with SHA256 hashing, 5-min in-memory cache
+- Connection pooling (QueuePool) with retry-on-transient decorator (17 Azure SQL error codes)
+- Pydantic validation on all 16 MCP tools with field limits
+- Rate limiting on auth endpoints (token, OAuth authorize, OAuth token — via SlowAPI/Redis)
+- Attendee and tag filtering on meetings (MCP only; web UI has no attendee filter)
+- Transcript storage and search (keyword search with snippet extraction)
+- Three environments: team (internal), demo (Mark sign-off), marshall (first client)
+- D16 security fixes deployed to team and demo (2026-02-12): 19 fixes across 4 batches, 60 tests passing
+- **Security:**
+  - Security headers on all responses (X-Content-Type-Options, X-Frame-Options, CSP, Referrer-Policy, Permissions-Policy, Cache-Control on auth endpoints)
+  - Rate limiting on authentication endpoints
+  - Pydantic field-level validation with length limits on all MCP tools
+  - Migration framework with checksum verification and rollback support
+- **Observability:**
+  - Application Insights telemetry (via azure-monitor-opentelemetry)
+  - Structured logging (no print statements)
+  - Health probes (Liveness `/health/live` + Readiness `/health/ready`)
+  - Azure SQL Auditing (90-day retention)
+  - Budget alerts ($100 AUD/month: 80% warning, 100% critical)
+  - Azure Monitor alert rules (6 per env): 5xx errors, high latency, container restarts, CPU/memory, health probe failures, scaling events
+- **Infrastructure as Code:** Bicep templates (6 modules) managing Container App, SQL, Key Vault, monitoring, identity/RBAC
+  - Note: team/demo are pre-Bicep environments — use `az containerapp update` for image deploys, deploy Bicep modules (e.g., alerts) standalone. Full Bicep deploy is for new environments only (e.g., marshall).
+- **Documentation package** (14 polished docs + 2 drafts in Second Brain `3-delivery/`):
+  - system-overview, user-guide, platform-setup, architecture, security
+  - deployment-guide, admin-database, user-admin, cost-summary, troubleshooting
+  - reference-architecture, client-offering, data-sovereignty-position, backup-restore-runbook
+  - Drafts: marshall-handover-draft.md, Reference Architecture .docx
+- **Working docs in repo** (`/docs/`, 16 files): ADRs, deployment briefs, implementation specs, audit reports, stress test results, best practice comparison
 
 **Known issues:**
 - Cold start delay (2-5 sec) when apps scale from 0
 - No email notifications for actions
-- No Fireflies integration (removed)
 - ChatGPT requires connector to be manually enabled in Tools menu per chat
+- `get_decision()` exists in `tools/decisions.py` but has no MCP wrapper
+- `ExpandableText` component exists in web UI but is unused (leftover from earlier approach)
+- `meetingsApi.search()` defined in `web/src/services/api.js` but not used in any UI component
+- Marshall deployment pending — D16 fixes not yet deployed (needs coordination with John re: breaking changes to ChatGPT OAuth flow)
 
 ---
 
 ## Technical Debt
 
-- [ ] No test suite - this is MVP, tests not written
-- [ ] Hardcoded `system@generationai.co.nz` for MCP user attribution
+- [ ] No integration tests or CI — `test_validation.py` has 58 unit tests for schema validation, but no integration tests, and no CI pipeline to run them
+- [ ] Hardcoded `system@generationai.co.nz` for MCP user attribution (`mcp_server.py:34`)
 - [ ] Log Analytics workspaces created per environment (could consolidate)
 - [ ] Legacy `meeting-intelligence-v2-rg` resource group still exists (can delete)
-- [ ] MCP auth tokens use old @myadvisor.co.nz domain in mapping
-- [ ] OAuth 2.1 uses in-memory storage - clients/codes lost on container restart (fine for MVP)
+- [ ] OAuth 2.1 auth codes stored in-memory — lost on container restart (clients persist to DB via OAuthClient table, but pending auth codes do not)
 
 ---
 
@@ -183,7 +208,7 @@ When working in this codebase:
 2. **Don't review code unless asked** — context window is expensive
 3. **Follow existing patterns** — check the Patterns section above
 4. **Update this file** when you make significant changes
-5. **Deploy changes** using `./deploy.sh [env]` - use unique image tags
+5. **Deploy changes** using `./infra/deploy-bicep.sh [env]` - use unique image tags
 
 **Before writing code:**
 - Confirm you understand the architecture
@@ -191,7 +216,10 @@ When working in this codebase:
 - For non-trivial changes, outline approach before implementing
 
 **Deployment notes:**
-- Always use a unique image tag: `IMAGE_TAG="$(date +%Y%m%d%H%M%S)" ./deploy.sh prod`
+- Always use a unique image tag: `./infra/deploy-bicep.sh marshall $(date +%Y%m%d%H%M%S)`
+- `deploy.sh` is deprecated — use `infra/deploy-bicep.sh` for new environments (marshall)
+- **Pre-Bicep environments (team/demo):** Use `az containerapp update --image` for image deploys. Deploy Bicep modules (e.g., alerts) standalone. Full Bicep deploy creates new per-env infra — do NOT use.
+- **ACR builds must include VITE build args:** `--build-arg VITE_SPA_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_API_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_AZURE_TENANT_ID=12e7fcaa-f776-4545-aacf-e89be7737cf3 --build-arg VITE_API_URL=/api`
 - After deploy, reconnect MCP in Claude to refresh tool list
 - Check revision status: `az containerapp revision list --name [app] --resource-group [rg] -o table`
 

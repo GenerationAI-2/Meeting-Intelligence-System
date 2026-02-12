@@ -71,6 +71,18 @@ def get_base_url() -> str:
     return f"http://{settings.host}:{settings.port}"
 
 
+def _resource_matches(resource: str) -> bool:
+    """Check if a resource indicator matches this server's base URL.
+
+    Normalises both values: strips trailing slashes and paths so that
+    e.g. 'https://host/sse' or 'https://host/' still match 'https://host'.
+    """
+    from urllib.parse import urlparse
+    expected = urlparse(get_base_url())
+    actual = urlparse(resource.rstrip("/"))
+    return (actual.scheme, actual.netloc) == (expected.scheme, expected.netloc)
+
+
 def get_jwt_secret() -> str:
     """Get current JWT secret for signing new tokens."""
     settings = get_settings()
@@ -353,7 +365,7 @@ async def authorize_get(
 ):
     """Authorization endpoint — renders consent page requiring MCP token."""
     # RFC 8707: validate resource indicator if provided
-    if resource and resource != get_base_url():
+    if resource and not _resource_matches(resource):
         raise HTTPException(400, "Invalid resource indicator")
 
     client = _validate_authorize_params(
@@ -386,7 +398,7 @@ async def authorize_post(
     token: str = Form(...),
 ):
     """Authorization endpoint — validates MCP token, then issues auth code."""
-    if resource and resource != get_base_url():
+    if resource and not _resource_matches(resource):
         raise HTTPException(400, "Invalid resource indicator")
 
     client = _validate_authorize_params(
