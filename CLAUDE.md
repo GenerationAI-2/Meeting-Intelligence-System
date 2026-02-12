@@ -1,7 +1,7 @@
 # Meeting Intelligence System - Agent Context
 
 **Last Updated:** 2026-02-12
-**Project Status:** SHAPE (Phase 3)
+**Project Status:** Phase 3 IN PROGRESS — D workstream complete
 **Owner:** Caleb Lucas
 
 ---
@@ -36,6 +36,7 @@ npm run dev  # Run on :5173
 - `ALLOWED_USERS` — Comma-separated emails for web UI access
 - `CORS_ORIGINS` — Allowed CORS origins
 - `JWT_SECRET` — Secret for OAuth JWT tokens
+- `JWT_SECRET_PREVIOUS` — (Optional) Previous JWT secret for dual-key rotation during secret rotation window
 - `OAUTH_BASE_URL` — Base URL for OAuth endpoints (e.g., team instance URL)
 - `VITE_*` — Frontend config (client ID, tenant, API URL)
 
@@ -78,6 +79,10 @@ web/src/
 | `.env.deploy` | Secrets (not in git) |
 | `schema.sql` | Database schema definition |
 | `server/migrations/002_client_tokens.sql` | ClientToken + OAuthClient table migration |
+| `server/migrations/003_refresh_token_usage.sql` | Refresh token usage tracking migration |
+| `server/scripts/migrate.py` | Multi-database migration runner |
+| `infra/audit.sh` | Pre-deploy vulnerability scanning (pip-audit + npm audit + trivy) |
+| `infra/deploy-all.sh` | Multi-client staged deployment script |
 
 ---
 
@@ -122,11 +127,11 @@ web/src/
 **Phases:**
 - Phase 1: SHIPPED (Jan 2026) — Core CRUD, MCP, web UI
 - Phase 2: CLOSED (5-12 Feb 2026) — Production hardening, IaC, auth refactor, tenant isolation, OAuth
-- Phase 3: SHAPING — Productisation (workflows, skills, documentation, onboarding)
+- Phase 3: IN PROGRESS (12 Feb 2026 –). D workstream (Platform Readiness) complete. A/B/C workstreams pending.
 
 **What's working:**
 - 16 MCP tools for meetings (6), actions (7), decisions (3)
-- 5 database tables: Meeting, Action, Decision, ClientToken, OAuthClient + `_MigrationHistory` tracking table
+- 6 database tables: Meeting, Action, Decision, ClientToken, OAuthClient, RefreshTokenUsage + `_MigrationHistory` tracking table
 - 4 transport methods: Streamable HTTP (`/mcp`), SSE (`/sse`), stdio (local), REST (`/api/*`)
 - Full CRUD for meetings, actions, decisions via MCP tools. Web UI is read-only for creation (no create/edit forms); only action status updates are supported in UI.
 - Delete operations for all entities (cascade delete for meetings done in application code, not FK constraints)
@@ -134,27 +139,40 @@ web/src/
 - MCP authentication (multiple methods):
   - Token auth (query param / Bearer header / X-API-Key) for Claude
   - Path-based token auth for Copilot (`/mcp/{token}`)
-  - OAuth 2.1 with DCR + PKCE for ChatGPT (hardened: redirect URI allowlist + token-gated consent + origin-based resource indicator matching)
+  - OAuth 2.1 with DCR + PKCE for ChatGPT (hardened: redirect URI allowlist + token-gated consent + origin-based resource indicator matching + refresh token rotation + token revocation endpoint)
 - DB-backed client tokens with SHA256 hashing, 5-min in-memory cache
 - Connection pooling (QueuePool) with retry-on-transient decorator (17 Azure SQL error codes)
 - Pydantic validation on all 16 MCP tools with field limits
-- Rate limiting on auth endpoints (token, OAuth authorize, OAuth token — via SlowAPI/Redis)
+- Tiered rate limiting: MCP 120/min per-token, OAuth 20/min per-IP, API 60/min per-IP. Returns 429 with Retry-After header.
 - Attendee and tag filtering on meetings (MCP only; web UI has no attendee filter)
 - Transcript storage and search (keyword search with snippet extraction)
 - Three environments: team (internal), demo (Mark sign-off), marshall (first client)
 - D16 security fixes deployed to team and demo (2026-02-12): 19 fixes across 4 batches, 60 tests passing
 - **Security:**
+  - Non-root container user (appuser)
   - Security headers on all responses (X-Content-Type-Options, X-Frame-Options, CSP, Referrer-Policy, Permissions-Policy, Cache-Control on auth endpoints)
-  - Rate limiting on authentication endpoints
+  - Origin header validation with DNS rebinding protection
+  - CORS restricted to specific methods and headers
+  - Tiered rate limiting on auth and API endpoints
   - Pydantic field-level validation with length limits on all MCP tools
+  - OAuth client_secret hashed with SHA256
+  - Server-side HTML tag stripping on all text inputs
+  - Null byte stripping on all text inputs
+  - JWT dual-key rotation support (JWT_SECRET_PREVIOUS)
+  - OAuth refresh token rotation on use (RFC-compliant)
+  - Token revocation endpoint (`/oauth/revoke`, RFC 7009)
+  - RFC 9728 protected resource metadata (`/.well-known/oauth-protected-resource`)
+  - MCP-Protocol-Version header validation
+  - RFC 8707 resource indicators
   - Migration framework with checksum verification and rollback support
 - **Observability:**
   - Application Insights telemetry (via azure-monitor-opentelemetry)
   - Structured logging (no print statements)
   - Health probes (Liveness `/health/live` + Readiness `/health/ready`)
   - Azure SQL Auditing (90-day retention)
-  - Budget alerts ($100 AUD/month: 80% warning, 100% critical)
-  - Azure Monitor alert rules (6 per env): 5xx errors, high latency, container restarts, CPU/memory, health probe failures, scaling events
+  - Budget alerts ($35 AUD/month: 80% warning, 100% critical)
+  - Azure Monitor alert rules (7 per env): 5xx errors, response time, container restarts, replica-zero (client envs only), CPU, memory, auth failure spike
+  - Pre-deploy vulnerability scanning via `infra/audit.sh`
 - **Infrastructure as Code:** Bicep templates (6 modules) managing Container App, SQL, Key Vault, monitoring, identity/RBAC
   - Note: team/demo are pre-Bicep environments — use `az containerapp update` for image deploys, deploy Bicep modules (e.g., alerts) standalone. Full Bicep deploy is for new environments only (e.g., marshall).
 - **Documentation package** (14 polished docs + 2 drafts in Second Brain `3-delivery/`):
@@ -162,22 +180,23 @@ web/src/
   - deployment-guide, admin-database, user-admin, cost-summary, troubleshooting
   - reference-architecture, client-offering, data-sovereignty-position, backup-restore-runbook
   - Drafts: marshall-handover-draft.md, Reference Architecture .docx
-- **Working docs in repo** (`/docs/`, 16 files): ADRs, deployment briefs, implementation specs, audit reports, stress test results, best practice comparison
+- **Working docs in repo** (`/docs/`, 19 files): ADRs, deployment briefs, implementation specs, audit reports, stress test results, best practice comparison, incident playbook, offboarding runbook, SLA/RPO/RTO
 
 **Known issues:**
-- Cold start delay (2-5 sec) when apps scale from 0
+- ~~Cold start delay~~ measured at 209ms TTFB (D14) — not an issue
 - No email notifications for actions
 - ChatGPT requires connector to be manually enabled in Tools menu per chat
 - `get_decision()` exists in `tools/decisions.py` but has no MCP wrapper
 - `ExpandableText` component exists in web UI but is unused (leftover from earlier approach)
 - `meetingsApi.search()` defined in `web/src/services/api.js` but not used in any UI component
-- Marshall deployment pending — D16 fixes not yet deployed (needs coordination with John re: breaking changes to ChatGPT OAuth flow)
+- Marshall pending D16 rollout — migration 003 + ChatGPT re-auth required
+- CI/CD not automated (manual deploy with pre-deploy audit script)
 
 ---
 
 ## Technical Debt
 
-- [ ] No integration tests or CI — `test_validation.py` has 58 unit tests for schema validation, but no integration tests, and no CI pipeline to run them
+- [ ] No integration tests or CI — `test_validation.py` has 60 unit tests for schema validation, but no integration tests, and no CI pipeline to run them
 - [ ] Hardcoded `system@generationai.co.nz` for MCP user attribution (`mcp_server.py:34`)
 - [ ] Log Analytics workspaces created per environment (could consolidate)
 - [ ] Legacy `meeting-intelligence-v2-rg` resource group still exists (can delete)
@@ -190,7 +209,7 @@ web/src/
 | Package | Version | Why |
 |---------|---------|-----|
 | FastAPI | latest | Web framework with async support |
-| mcp[cli] | >=1.8.0 | Model Context Protocol SDK (Streamable HTTP) |
+| mcp[cli] | >=1.8.0,<2.0.0 | Model Context Protocol SDK (Streamable HTTP) |
 | pyodbc | latest | Azure SQL connectivity |
 | pydantic-settings | latest | Environment config management |
 | PyJWT | latest | OAuth 2.1 JWT token handling |
