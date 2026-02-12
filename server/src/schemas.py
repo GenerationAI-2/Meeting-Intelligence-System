@@ -9,6 +9,18 @@ import re
 # === Shared Validators ===
 
 EMAIL_PATTERN = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+HTML_TAG_PATTERN = re.compile(r'</?[a-zA-Z][^>]*>')
+
+
+def strip_html_tags(text: str) -> str:
+    """Strip HTML tags from text to prevent stored XSS.
+
+    Matches actual HTML tags (e.g. <script>, <img onerror=...>) but preserves
+    legitimate angle bracket usage (e.g. "meeting < 30 mins", "a < b > c").
+    """
+    if not text:
+        return text
+    return HTML_TAG_PATTERN.sub('', text)
 
 
 def validate_email_format(email: str) -> str:
@@ -59,6 +71,11 @@ class MeetingCreate(BaseModel):
     tags: Optional[str] = Field(None, max_length=1000,
                                 description="Comma-separated lowercase tags")
 
+    @field_validator('title', 'summary', 'transcript')
+    @classmethod
+    def sanitise_text(cls, v):
+        return strip_html_tags(v) if v else v
+
     @field_validator('meeting_date')
     @classmethod
     def check_meeting_date(cls, v):
@@ -86,6 +103,11 @@ class MeetingUpdate(BaseModel):
     attendees: Optional[str] = Field(None, max_length=5000)
     tags: Optional[str] = Field(None, max_length=1000)
 
+    @field_validator('title', 'summary', 'transcript')
+    @classmethod
+    def sanitise_text(cls, v):
+        return strip_html_tags(v) if v else v
+
     @field_validator('tags')
     @classmethod
     def normalise_tags(cls, v):
@@ -109,6 +131,11 @@ class MeetingSearch(BaseModel):
     query: str = Field(..., min_length=1, max_length=500, description="Search keyword")
     limit: Optional[int] = Field(50, gt=0, le=200, description="Max results")
 
+    @field_validator('query')
+    @classmethod
+    def sanitise_query(cls, v):
+        return strip_html_tags(v) if v else v
+
 
 class MeetingListFilter(BaseModel):
     attendee: Optional[str] = Field(None, max_length=128)
@@ -131,6 +158,11 @@ class ActionCreate(BaseModel):
     notes: Optional[str] = Field(None, max_length=10000,
                                  description="Additional notes")
 
+    @field_validator('action_text', 'notes')
+    @classmethod
+    def sanitise_text(cls, v):
+        return strip_html_tags(v) if v else v
+
     @field_validator('owner')
     @classmethod
     def check_owner(cls, v):
@@ -152,6 +184,11 @@ class ActionUpdate(BaseModel):
     owner: Optional[str] = Field(None, min_length=1, max_length=128)
     due_date: Optional[str] = Field(None)
     notes: Optional[str] = Field(None, max_length=10000)
+
+    @field_validator('action_text', 'notes')
+    @classmethod
+    def sanitise_text(cls, v):
+        return strip_html_tags(v) if v else v
 
     @field_validator('owner')
     @classmethod
@@ -199,6 +236,11 @@ class DecisionCreate(BaseModel):
                             description="Associated meeting ID")
     context: Optional[str] = Field(None, max_length=10000,
                                    description="Decision context")
+
+    @field_validator('decision_text', 'context')
+    @classmethod
+    def sanitise_text(cls, v):
+        return strip_html_tags(v) if v else v
 
 
 class DecisionId(BaseModel):
