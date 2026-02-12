@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # OAuth 2.1 settings (for ChatGPT MCP support)
     jwt_secret: str = ""  # Required for OAuth - generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    jwt_secret_previous: str = ""  # Optional — set to old secret during key rotation (keep for 30 days to cover refresh token lifetime)
     oauth_base_url: str = ""  # Set to deployed URL, e.g., https://meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io
     oauth_allowed_redirect_domains: str = ""  # Comma-separated domains for OAuth redirect URIs. Default: claude.ai,claude.com,chatgpt.com,openai.com,localhost,127.0.0.1
 

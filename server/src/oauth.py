@@ -72,12 +72,32 @@ def get_base_url() -> str:
 
 
 def get_jwt_secret() -> str:
-    """Get JWT secret, generating one if not configured (dev only)."""
+    """Get current JWT secret for signing new tokens."""
     settings = get_settings()
     if settings.jwt_secret:
         return settings.jwt_secret
     # For local dev, use a random secret (tokens won't survive restart)
     return secrets.token_urlsafe(32)
+
+
+def _decode_jwt_with_rotation(token: str, **kwargs) -> dict:
+    """Decode a JWT, trying the current secret first, then the previous.
+
+    During key rotation, tokens signed with the old key remain valid for
+    the rotation window (30 days to cover refresh token lifetime).
+    Raises jwt.InvalidTokenError if neither key works.
+    """
+    current_secret = get_jwt_secret()
+    settings = get_settings()
+    previous_secret = settings.jwt_secret_previous or None
+
+    try:
+        return jwt.decode(token, current_secret, algorithms=["HS256"], **kwargs)
+    except jwt.InvalidTokenError:
+        if previous_secret:
+            # Fall back to previous key during rotation window
+            return jwt.decode(token, previous_secret, algorithms=["HS256"], **kwargs)
+        raise
 
 
 # ============================================================================
@@ -496,7 +516,7 @@ async def token(
             raise HTTPException(400, "refresh_token is required")
 
         try:
-            payload = jwt.decode(refresh_token, jwt_secret, algorithms=["HS256"])
+            payload = _decode_jwt_with_rotation(refresh_token)
 
             # Validate this is actually a refresh token
             if payload.get("type") != "refresh":
@@ -541,19 +561,11 @@ def validate_oauth_token(token: str) -> Optional[dict]:
 
     Returns None if token is invalid, otherwise returns the token payload.
     Used by MCP auth middleware to validate Bearer tokens from ChatGPT.
+    Supports dual-key rotation — tries current key first, then previous.
     """
     try:
-        jwt_secret = get_jwt_secret()
         base_url = get_base_url()
-
-        # Decode with audience validation
-        payload = jwt.decode(
-            token,
-            jwt_secret,
-            algorithms=["HS256"],
-            audience=base_url,
-            issuer=base_url
-        )
+        payload = _decode_jwt_with_rotation(token, audience=base_url, issuer=base_url)
 
         # Ensure this is an access token (not refresh)
         if payload.get("type") == "refresh":
