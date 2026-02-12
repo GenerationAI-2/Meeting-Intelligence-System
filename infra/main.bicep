@@ -129,6 +129,18 @@ module identity 'modules/identity.bicep' = {
   }
 }
 
+module alerts 'modules/alerts.bicep' = {
+  name: 'alerts-${environmentName}'
+  params: {
+    environmentName: environmentName
+    location: location
+    tags: tags
+    containerAppId: containerApp.outputs.containerAppId
+    logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
+    minReplicas: minReplicas
+  }
+}
+
 // === OUTPUTS ===
 
 output containerAppFqdn string = containerApp.outputs.fqdn
