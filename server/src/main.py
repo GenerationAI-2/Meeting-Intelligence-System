@@ -41,31 +41,47 @@ def run_http():
     # In-memory token cache — avoids DB hit on every MCP request
     # Trade-off: revoked tokens may still work for up to TOKEN_CACHE_TTL seconds
     _token_cache: dict[str, dict] = {}  # {hash: {"email": str, "expires_cache": float}}
+    _token_cache_lock = asyncio.Lock()
     TOKEN_CACHE_TTL = 300  # 5 minutes
+    TOKEN_CACHE_MAX_SIZE = 1000
 
-    def validate_mcp_token(token: str) -> str | None:
+    async def validate_mcp_token(token: str) -> str | None:
         """Validate MCP token. Returns client email if valid, None if not.
 
-        Uses in-memory cache with 5-minute TTL to reduce DB load.
+        Uses in-memory cache with 5-minute TTL and max size to reduce DB load.
+        Protected by asyncio.Lock for concurrent access safety.
         """
         token_hash = hashlib.sha256(token.encode()).hexdigest()
+        now = _time.time()
 
-        # Check cache first
-        cached = _token_cache.get(token_hash)
-        if cached and cached["expires_cache"] > _time.time():
-            return cached["email"]
+        async with _token_cache_lock:
+            # Check cache first
+            cached = _token_cache.get(token_hash)
+            if cached and cached["expires_cache"] > now:
+                return cached["email"]
 
-        # Cache miss — check database
+            # Evict expired entries while we hold the lock
+            expired = [k for k, v in _token_cache.items() if v["expires_cache"] <= now]
+            for k in expired:
+                del _token_cache[k]
+
+        # Cache miss — check database (outside lock to avoid holding it during I/O)
         result = validate_client_token(token_hash)
-        if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
-            _token_cache[token_hash] = {
-                "email": result["client_email"],
-                "expires_cache": _time.time() + TOKEN_CACHE_TTL,
-            }
-            return result["client_email"]
 
-        # Invalid — remove from cache if present
-        _token_cache.pop(token_hash, None)
+        async with _token_cache_lock:
+            if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
+                # Enforce max cache size — evict oldest entries if full
+                if len(_token_cache) >= TOKEN_CACHE_MAX_SIZE:
+                    oldest_key = min(_token_cache, key=lambda k: _token_cache[k]["expires_cache"])
+                    del _token_cache[oldest_key]
+                _token_cache[token_hash] = {
+                    "email": result["client_email"],
+                    "expires_cache": _time.time() + TOKEN_CACHE_TTL,
+                }
+                return result["client_email"]
+
+            # Invalid — remove from cache if present
+            _token_cache.pop(token_hash, None)
         return None
 
     # Create MCP transport apps first (this creates the session manager)
@@ -277,7 +293,7 @@ def run_http():
         # Check for path-based token: /mcp/{token} (for Copilot)
         if path.startswith("/mcp/") and len(path) > 5:
             path_token = path[5:]  # Extract token from path
-            email = validate_mcp_token(path_token)
+            email = await validate_mcp_token(path_token)
             if email:
                 token = path_token
                 set_mcp_user(email)
@@ -298,7 +314,7 @@ def run_http():
             if auth.startswith("Bearer "):
                 bearer_token = auth[7:]
                 # First check if it's an MCP client token
-                email = validate_mcp_token(bearer_token)
+                email = await validate_mcp_token(bearer_token)
                 if email:
                     token = bearer_token
                     set_mcp_user(email)
@@ -314,7 +330,7 @@ def run_http():
             return Response("Unauthorized", status_code=401)
 
         # For query param / X-API-Key tokens, resolve email if not already set
-        email = validate_mcp_token(token)
+        email = await validate_mcp_token(token)
         if not email:
             return Response("Unauthorized", status_code=401)
         set_mcp_user(email)
