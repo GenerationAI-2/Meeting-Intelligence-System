@@ -108,25 +108,34 @@ def get_applied_migrations(conn: pyodbc.Connection) -> dict[str, dict]:
 
 
 def apply_migration(conn: pyodbc.Connection, migration_id: str, path: Path, applied_by: str) -> None:
-    """Apply a single migration file."""
+    """Apply a single migration file within a transaction.
+
+    If any statement fails, the entire migration is rolled back and
+    _MigrationHistory is not updated.
+    """
     sql = path.read_text(encoding="utf-8")
     checksum = file_checksum(path)
 
+    conn.autocommit = False
     cursor = conn.cursor()
-    # Execute migration SQL (may contain multiple statements separated by GO)
-    # Split on GO statements (must be alone on a line)
-    batches = _split_on_go(sql)
-    for batch in batches:
-        batch = batch.strip()
-        if batch:
-            cursor.execute(batch)
+    try:
+        # Execute migration SQL (may contain multiple statements separated by GO)
+        # Split on GO statements (must be alone on a line)
+        batches = _split_on_go(sql)
+        for batch in batches:
+            batch = batch.strip()
+            if batch:
+                cursor.execute(batch)
 
-    # Record in tracking table
-    cursor.execute(
-        "INSERT INTO _MigrationHistory (MigrationId, AppliedBy, Checksum) VALUES (?, ?, ?)",
-        (migration_id, applied_by, checksum),
-    )
-    conn.commit()
+        # Record in tracking table (only if all statements succeeded)
+        cursor.execute(
+            "INSERT INTO _MigrationHistory (MigrationId, AppliedBy, Checksum) VALUES (?, ?, ?)",
+            (migration_id, applied_by, checksum),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _split_on_go(sql: str) -> list[str]:
