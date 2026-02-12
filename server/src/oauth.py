@@ -257,10 +257,11 @@ async def register_client(request: ClientRegistrationRequest):
 
     client_id = str(uuid.uuid4())
     client_secret = secrets.token_urlsafe(32)
+    client_secret_hash = hashlib.sha256(client_secret.encode()).hexdigest()
 
     client_data = {
         "client_id": client_id,
-        "client_secret": client_secret,
+        "client_secret": client_secret_hash,
         "redirect_uris": request.redirect_uris,
         "client_name": request.client_name or "ChatGPT",
         "scope": request.scope or "mcp:read mcp:write",
@@ -424,7 +425,7 @@ async def token(
     if not client:
         raise HTTPException(401, "Invalid client_id")
 
-    if client.get("client_secret") != client_secret:
+    if client.get("client_secret") != hashlib.sha256(client_secret.encode()).hexdigest():
         raise HTTPException(401, "Invalid client_secret")
 
     if grant_type == "authorization_code":
