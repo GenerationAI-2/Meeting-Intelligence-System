@@ -241,6 +241,7 @@ async def oauth_authorization_server():
         "authorization_endpoint": f"{base_url}/oauth/authorize",
         "token_endpoint": f"{base_url}/oauth/token",
         "registration_endpoint": f"{base_url}/oauth/register",
+        "revocation_endpoint": f"{base_url}/oauth/revoke",
         "scopes_supported": ["mcp:read", "mcp:write"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
@@ -570,6 +571,36 @@ async def token(
 
     else:
         raise HTTPException(400, f"Unsupported grant_type: {grant_type}")
+
+
+# ============================================================================
+# TOKEN REVOCATION (RFC 7009)
+# ============================================================================
+
+@router.post("/oauth/revoke")
+async def revoke_token(
+    token: str = Form(...),
+    token_type_hint: Optional[str] = Form(None),
+):
+    """Revoke an OAuth token per RFC 7009.
+
+    For refresh tokens: marks as consumed so it cannot be reused.
+    For access tokens: accepted but no action (stateless, expires in 1hr).
+    Always returns 200 per RFC 7009 (even if token is invalid).
+    """
+    # Try to decode as refresh token and consume it
+    try:
+        payload = _decode_jwt_with_rotation(token)
+        if payload.get("type") == "refresh":
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            family_id = payload.get("family", "legacy")
+            client_id = payload.get("sub", "unknown")
+            consume_refresh_token(token_hash, family_id, client_id)
+            logger.info("Revoked refresh token for client %s", client_id)
+    except jwt.InvalidTokenError:
+        pass  # Per RFC 7009, invalid tokens get 200 too
+
+    return {"status": "revoked"}
 
 
 # ============================================================================
