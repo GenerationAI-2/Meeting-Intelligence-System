@@ -84,12 +84,18 @@ def _resource_matches(resource: str) -> bool:
 
 
 def get_jwt_secret() -> str:
-    """Get current JWT secret for signing new tokens."""
+    """Get current JWT secret for signing new tokens.
+
+    Raises RuntimeError if JWT_SECRET is not configured — the server must not
+    issue tokens signed with a throwaway key.
+    """
     settings = get_settings()
     if settings.jwt_secret:
         return settings.jwt_secret
-    # For local dev, use a random secret (tokens won't survive restart)
-    return secrets.token_urlsafe(32)
+    raise RuntimeError(
+        "JWT_SECRET is not configured. Set it in .env.deploy or as an environment variable. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
 
 
 def _decode_jwt_with_rotation(token: str, **kwargs) -> dict:

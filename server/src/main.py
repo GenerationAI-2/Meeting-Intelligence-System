@@ -75,6 +75,10 @@ def run_http():
     # Lifespan for MCP session management
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # Fail fast if JWT_SECRET is not configured
+        from .oauth import get_jwt_secret
+        get_jwt_secret()
+
         # Load OAuth clients from database into memory on startup
         init_oauth_clients()
         async with mcp.session_manager.run():
