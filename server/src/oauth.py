@@ -611,22 +611,33 @@ async def token(
 async def revoke_token(
     token: str = Form(...),
     token_type_hint: Optional[str] = Form(None),
+    client_id: str = Form(...),
+    client_secret: str = Form(...),
 ):
-    """Revoke an OAuth token per RFC 7009.
+    """Revoke an OAuth token per RFC 7009 Section 2.1.
 
+    Requires client authentication (client_id + client_secret).
     For refresh tokens: marks as consumed so it cannot be reused.
     For access tokens: accepted but no action (stateless, expires in 1hr).
-    Always returns 200 per RFC 7009 (even if token is invalid).
+    Returns 200 per RFC 7009 on success (even if token is invalid),
+    401 if client authentication fails.
     """
+    # Authenticate the client (RFC 7009 Section 2.1)
+    client = _get_client(client_id)
+    if not client:
+        raise HTTPException(401, "Invalid client_id")
+    if client.get("client_secret") != hashlib.sha256(client_secret.encode()).hexdigest():
+        raise HTTPException(401, "Invalid client_secret")
+
     # Try to decode as refresh token and consume it
     try:
         payload = _decode_jwt_with_rotation(token)
         if payload.get("type") == "refresh":
             token_hash = hashlib.sha256(token.encode()).hexdigest()
             family_id = payload.get("family", "legacy")
-            client_id = payload.get("sub", "unknown")
-            consume_refresh_token(token_hash, family_id, client_id)
-            logger.info("Revoked refresh token for client %s", client_id)
+            token_client_id = payload.get("sub", "unknown")
+            consume_refresh_token(token_hash, family_id, token_client_id)
+            logger.info("Revoked refresh token for client %s", token_client_id)
     except jwt.InvalidTokenError:
         pass  # Per RFC 7009, invalid tokens get 200 too
 
