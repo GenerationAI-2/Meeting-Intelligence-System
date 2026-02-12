@@ -102,6 +102,27 @@ def run_http():
 
     app.add_middleware(PayloadSizeLimitMiddleware)
 
+    # Security headers middleware
+    class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "font-src 'self'; "
+                "connect-src 'self' https://login.microsoftonline.com https://*.microsoftonline.com; "
+                "frame-ancestors 'none'"
+            )
+            return response
+
+    app.add_middleware(SecurityHeadersMiddleware)
+
     # CORS - include mcp-session-id header
     app.add_middleware(
         CORSMiddleware,
