@@ -18,7 +18,7 @@ import uuid
 import jwt
 from datetime import datetime, timedelta
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 
 from fastapi import APIRouter, HTTPException, Form, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -390,9 +390,10 @@ async def authorize_post(
 
     logger.info("OAuth authorized for client %s by %s", client_id, client_email)
 
-    redirect_url = f"{redirect_uri}?code={auth_code}"
+    params = {"code": auth_code}
     if state:
-        redirect_url += f"&state={state}"
+        params["state"] = state
+    redirect_url = f"{redirect_uri}?{urlencode(params)}"
 
     return RedirectResponse(redirect_url, status_code=302)
 
