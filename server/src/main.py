@@ -112,6 +112,11 @@ def run_http():
         expose_headers=["mcp-session-id"],
     )
 
+    # Allowed origins for MCP Origin header validation (MCP spec 2025-11-25).
+    # The SDK's DNS rebinding middleware is bypassed when routes are mounted
+    # onto a parent app, so we enforce Origin validation here.
+    _allowed_origins = set(settings.get_cors_origins_list())
+
     # Token auth middleware for MCP endpoints
     # Uses DB-backed token validation with in-memory cache (5-min TTL)
     @app.middleware("http")
@@ -121,6 +126,14 @@ def run_http():
         # Only check auth for MCP endpoints
         if not (path.startswith("/sse") or path.startswith("/mcp")):
             return await call_next(request)
+
+        # Origin header validation per MCP spec 2025-11-25.
+        # Reject requests with an Origin that isn't in our allowed list.
+        # Requests without Origin are allowed (server-to-server, CLI tools).
+        origin = request.headers.get("origin")
+        if origin and origin not in _allowed_origins:
+            logger.warning("Rejected MCP request with invalid Origin: %s", origin)
+            return Response("Forbidden", status_code=403)
 
         token = None
 

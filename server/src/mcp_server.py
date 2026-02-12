@@ -19,10 +19,13 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True)
 WRITE = ToolAnnotations(readOnlyHint=False)
 DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
 
-# Configure transport security - disable DNS rebinding protection
-# (we use token-based auth instead)
+# Configure transport security — enable DNS rebinding protection.
+# Note: when routes are mounted onto a parent FastAPI app, the SDK's
+# middleware is bypassed. Origin validation is enforced by custom
+# middleware in main.py. This setting is kept enabled for correctness
+# if the mounting approach changes in the future.
 transport_security = TransportSecuritySettings(
-    enable_dns_rebinding_protection=False
+    enable_dns_rebinding_protection=True
 )
 
 # Create stateless MCP server (required for Copilot)
