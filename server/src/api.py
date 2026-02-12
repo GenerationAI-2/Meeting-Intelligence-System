@@ -253,6 +253,11 @@ async def update_action_status_endpoint(action_id: int, update: StatusUpdate, us
             result = actions.get_action(action_id)
         except Exception as e:
             result = {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status: '{update.status}'. Must be one of: Open, Complete, Parked"
+        )
     if result.get("error"):
         if result["code"] == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
