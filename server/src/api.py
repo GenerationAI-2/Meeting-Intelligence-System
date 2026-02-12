@@ -154,41 +154,6 @@ async def list_meetings_endpoint(
     return result
 
 
-@app.get("/api/meetings/{meeting_id}")
-async def get_meeting_endpoint(meeting_id: int, user: str = Depends(get_current_user)):
-    """Get meeting details including linked actions and decisions."""
-    result = meetings.get_meeting(meeting_id)
-    if result.get("error"):
-        if result["code"] == "NOT_FOUND":
-            raise HTTPException(status_code=404, detail=result["message"])
-        raise HTTPException(status_code=400, detail=result["message"])
-    
-    try:
-        with get_db() as cursor:
-            cursor.execute("""
-                SELECT DecisionId, DecisionText, Context
-                FROM Decision WHERE MeetingId = ?
-            """, (meeting_id,))
-            result["decisions"] = [
-                {"id": r[0], "text": r[1], "context": r[2]}
-                for r in cursor.fetchall()
-            ]
-            
-            cursor.execute("""
-                SELECT ActionId, ActionText, Owner, DueDate, Status
-                FROM Action WHERE MeetingId = ?
-            """, (meeting_id,))
-            result["actions"] = [
-                {"id": r[0], "text": r[1], "owner": r[2], 
-                 "due_date": r[3].isoformat() if r[3] else None, "status": r[4]}
-                for r in cursor.fetchall()
-            ]
-    except Exception:
-        pass
-    
-    return result
-
-
 @app.get("/api/meetings/search")
 async def search_meetings_endpoint(
     query: str = Query(..., min_length=2),
@@ -199,6 +164,41 @@ async def search_meetings_endpoint(
     result = meetings.search_meetings(query=query, limit=limit)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@app.get("/api/meetings/{meeting_id}")
+async def get_meeting_endpoint(meeting_id: int, user: str = Depends(get_current_user)):
+    """Get meeting details including linked actions and decisions."""
+    result = meetings.get_meeting(meeting_id)
+    if result.get("error"):
+        if result["code"] == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    try:
+        with get_db() as cursor:
+            cursor.execute("""
+                SELECT DecisionId, DecisionText, Context
+                FROM Decision WHERE MeetingId = ?
+            """, (meeting_id,))
+            result["decisions"] = [
+                {"id": r[0], "text": r[1], "context": r[2]}
+                for r in cursor.fetchall()
+            ]
+
+            cursor.execute("""
+                SELECT ActionId, ActionText, Owner, DueDate, Status
+                FROM Action WHERE MeetingId = ?
+            """, (meeting_id,))
+            result["actions"] = [
+                {"id": r[0], "text": r[1], "owner": r[2],
+                 "due_date": r[3].isoformat() if r[3] else None, "status": r[4]}
+                for r in cursor.fetchall()
+            ]
+    except Exception:
+        pass
+
     return result
 
 
