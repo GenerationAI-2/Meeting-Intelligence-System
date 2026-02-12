@@ -1,16 +1,33 @@
 #!/bin/bash
+
+# =============================================================================
+# DEPRECATED — DO NOT USE
+# =============================================================================
+# This script passes JWT_SECRET and MCP_AUTH_TOKENS as plaintext environment
+# variables in az containerapp commands, exposing them in command history and
+# process listings.
+#
+# Use instead: ./infra/deploy-bicep.sh <environment> [image-tag]
+#
+# This file is retained for reference only. It will exit immediately.
+# =============================================================================
+
+echo "ERROR: deploy.sh is deprecated and disabled."
+echo ""
+echo "This script exposes secrets in plaintext via CLI arguments."
+echo "Use the Bicep-based deployment instead:"
+echo ""
+echo "  ./infra/deploy-bicep.sh <environment> [image-tag]"
+echo ""
+echo "For pre-Bicep environments (team/demo), use:"
+echo ""
+echo "  az containerapp update --name <app> --resource-group <rg> --image <image>"
+echo ""
+exit 1
+
+# === ORIGINAL SCRIPT BELOW (for reference only) ===
+
 set -e
-
-# =============================================================================
-# DEPRECATED: Use infra/deploy-bicep.sh instead
-# This script is retained for reference only. The Bicep-based deployment
-# (infra/deploy-bicep.sh) provides IaC, Key Vault secrets, budget alerts,
-# resource tagging, and health probe configuration.
-# =============================================================================
-
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
 
 ENV="${1:-team}"
 
