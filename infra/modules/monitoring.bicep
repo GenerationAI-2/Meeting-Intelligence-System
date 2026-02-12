@@ -47,7 +47,7 @@ resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
   name: 'mi-${environmentName}-monthly'
   properties: {
     category: 'Cost'
-    amount: 100
+    amount: 35
     timeGrain: 'Monthly'
     timePeriod: {
       startDate: '2026-02-01'
