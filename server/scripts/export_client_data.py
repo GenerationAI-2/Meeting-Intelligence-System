@@ -52,8 +52,13 @@ def json_serializer(obj):
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
+ALLOWED_TABLES = {"Meeting", "Action", "Decision", "ClientToken", "OAuthClient", "RefreshTokenUsage"}
+
+
 def export_table(cursor, table_name: str, output_dir: Path) -> int:
     """Export a table to JSON. Returns row count."""
+    if table_name not in ALLOWED_TABLES:
+        raise ValueError(f"Table '{table_name}' is not in the allowlist. Allowed: {sorted(ALLOWED_TABLES)}")
     cursor.execute(f"SELECT * FROM [{table_name}] ORDER BY 1")
     columns = [col[0] for col in cursor.description]
     rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
