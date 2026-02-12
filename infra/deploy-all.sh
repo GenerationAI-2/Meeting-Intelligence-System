@@ -64,6 +64,18 @@ if [ "$SKIP_AUDIT" = false ]; then
     echo ""
 fi
 
+# --- Load secrets and config ---
+if [ -f "${REPO_ROOT}/.env.deploy" ]; then
+    set -a
+    source "${REPO_ROOT}/.env.deploy"
+    set +a
+fi
+
+# Azure AD config for frontend build (defaults match App Registration)
+VITE_SPA_CLIENT_ID="${VITE_SPA_CLIENT_ID:-d38c25fa-3ce8-4648-87ab-079dcc52754b}"
+VITE_API_CLIENT_ID="${VITE_API_CLIENT_ID:-b5a8a565-e18e-42a6-a57b-ade6d17aa197}"
+VITE_AZURE_TENANT_ID="${VITE_AZURE_TENANT_ID:-12e7fcaa-f776-4545-aacf-e89be7737cf3}"
+
 # --- Pre-flight: Build and push image ---
 echo "--- Building container image ---"
 echo "Building mi:${IMAGE_TAG} via ACR..."
@@ -71,17 +83,14 @@ az acr build \
     --registry "$ACR_NAME" \
     --image "mi:${IMAGE_TAG}" \
     --file "${REPO_ROOT}/server/Dockerfile" \
-    "${REPO_ROOT}/server" \
+    --build-arg VITE_SPA_CLIENT_ID="$VITE_SPA_CLIENT_ID" \
+    --build-arg VITE_API_CLIENT_ID="$VITE_API_CLIENT_ID" \
+    --build-arg VITE_AZURE_TENANT_ID="$VITE_AZURE_TENANT_ID" \
+    --build-arg VITE_API_URL="/api" \
+    "${REPO_ROOT}" \
     --no-logs 2>&1 | tail -5
 echo "Image pushed: ${ACR_NAME}.azurecr.io/mi:${IMAGE_TAG}"
 echo ""
-
-# --- Load secrets ---
-if [ -f "${REPO_ROOT}/.env.deploy" ]; then
-    set -a
-    source "${REPO_ROOT}/.env.deploy"
-    set +a
-fi
 
 if [ -z "${JWT_SECRET:-}" ]; then
     read -sp "JWT_SECRET: " JWT_SECRET; echo
