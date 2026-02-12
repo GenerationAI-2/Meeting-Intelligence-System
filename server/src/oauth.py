@@ -25,7 +25,7 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
 
 from .config import get_settings
-from .database import save_oauth_client, load_all_oauth_clients, validate_client_token
+from .database import save_oauth_client, load_all_oauth_clients, validate_client_token, consume_refresh_token
 
 logger = logging.getLogger(__name__)
 
@@ -495,10 +495,12 @@ async def token(
             "exp": now + timedelta(hours=1)
         }, jwt_secret, algorithm="HS256")
 
+        token_family = str(uuid.uuid4())
         refresh = jwt.encode({
             "iss": base_url,
             "sub": client_id,
             "type": "refresh",
+            "family": token_family,
             "iat": now,
             "exp": now + timedelta(days=30)
         }, jwt_secret, algorithm="HS256")
@@ -526,7 +528,15 @@ async def token(
             if payload.get("sub") != client_id:
                 raise HTTPException(400, "client_id mismatch")
 
-            # Issue new access token
+            # Refresh token rotation: mark this token as consumed.
+            # If already consumed, this is a replay (possible token theft).
+            token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+            family_id = payload.get("family", "legacy")
+            if not consume_refresh_token(token_hash, family_id, client_id):
+                logger.warning("Refresh token replay detected for client %s, family %s", client_id, family_id)
+                raise HTTPException(401, "Refresh token has already been used")
+
+            # Issue new access token + rotated refresh token
             now = datetime.utcnow()
             access_token = jwt.encode({
                 "iss": base_url,
@@ -537,10 +547,20 @@ async def token(
                 "exp": now + timedelta(hours=1)
             }, jwt_secret, algorithm="HS256")
 
+            new_refresh = jwt.encode({
+                "iss": base_url,
+                "sub": client_id,
+                "type": "refresh",
+                "family": family_id,
+                "iat": now,
+                "exp": now + timedelta(days=30)
+            }, jwt_secret, algorithm="HS256")
+
             return {
                 "access_token": access_token,
                 "token_type": "Bearer",
-                "expires_in": 3600
+                "expires_in": 3600,
+                "refresh_token": new_refresh
             }
 
         except jwt.ExpiredSignatureError:

@@ -405,3 +405,38 @@ def load_all_oauth_clients() -> dict:
             }
             clients[client["client_id"]] = client
         return clients
+
+
+# ============================================================================
+# REFRESH TOKEN USAGE TRACKING (for OAuth 2.1 rotation)
+# ============================================================================
+
+@retry_on_transient()
+def consume_refresh_token(token_hash: str, family_id: str, client_id: str) -> bool:
+    """Record a refresh token as consumed. Returns False if already consumed (replay)."""
+    with get_db() as cursor:
+        # Clean up entries older than 35 days (covers 30-day token lifetime + buffer)
+        cursor.execute(
+            "DELETE FROM RefreshTokenUsage WHERE ConsumedAt < DATEADD(day, -35, GETUTCDATE())"
+        )
+        # Try to insert — if hash already exists, it's a replay
+        try:
+            cursor.execute(
+                "INSERT INTO RefreshTokenUsage (TokenHash, FamilyId, ClientId) VALUES (?, ?, ?)",
+                (token_hash, family_id, client_id)
+            )
+            return True
+        except Exception:
+            # Primary key violation = token already consumed
+            return False
+
+
+@retry_on_transient()
+def revoke_token_family(family_id: str) -> int:
+    """Revoke all tokens in a family (theft detection). Returns count deleted."""
+    with get_db() as cursor:
+        cursor.execute(
+            "DELETE FROM RefreshTokenUsage WHERE FamilyId = ?",
+            (family_id,)
+        )
+        return cursor.rowcount
