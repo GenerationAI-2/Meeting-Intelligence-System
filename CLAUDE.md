@@ -119,6 +119,9 @@ web/src/
 | MCP SDK `enable_dns_rebinding_protection=True` with empty `allowed_hosts` | SDK v1.8+ applies host validation at route handler level (not just middleware). Empty allowed_hosts = all requests get 421. Fix: disable in SDK, enforce Origin validation in custom middleware. | 2026-02-12 |
 | Docker build without VITE build args | React compiles with `your-tenant-id` placeholder if `--build-arg VITE_*` not passed. Must include `--build-arg VITE_SPA_CLIENT_ID=... VITE_API_CLIENT_ID=... VITE_AZURE_TENANT_ID=... VITE_API_URL=/api` in every ACR build. | 2026-02-12 |
 | OAuth resource indicator exact match | Claude sends resource URI with path (e.g., `/mcp`). Exact string match against `OAUTH_BASE_URL` fails. Fix: compare scheme+host only (origin-based matching). | 2026-02-12 |
+| Key Vault RBAC propagation on greenfield | Bicep identity module assigns Key Vault Secrets User, then containerapp module creates a revision. If RBAC hasn't propagated (~5-10 min), the K8s secret `capp-<app-name>` is never created. App crash-loops with `secret not found`. Fix: force a new revision after waiting for RBAC propagation. | 2026-02-19 |
+| `az containerapp update --image` on first deploy | If the first Bicep deploy fails at containerapp, the K8s secret object for Key Vault refs is never created. `az containerapp update --image` only updates the image — doesn't recreate secret infra. Container crashes, then locks provisioning for ~30 min. Only fix: re-run full Bicep deploy. | 2026-02-19 |
+| SPA redirect URI with `/auth/callback` only | MSAL config uses `window.location.origin` (base URL, no path) as redirect URI. Registering only `https://<fqdn>/auth/callback` causes `AADSTS50011` mismatch. Must register both the base URL AND `/auth/callback`. | 2026-02-19 |
 
 ---
 
@@ -302,8 +305,9 @@ If you don't have access to Second Brain folder:
 | Team | meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io | meeting-intelligence-team | 0-10 | Internal use |
 | Demo | meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io | meeting-intelligence | 0-10 | Mark sign-off |
 | Marshall | mi-marshall.delightfulpebble-aa90cd5c.australiaeast.azurecontainerapps.io | mi-marshall | 1-10 | First client (John Marshall) |
+| Testing Instance | mi-testing-instance.icycliff-e324f345.australiaeast.azurecontainerapps.io | mi-testing-instance | 1-10 | Client demos (Mark) |
 
-**Estimated monthly cost:** ~$33 AUD (team + demo scale-to-zero), Marshall is always-on (minReplicas=1)
+**Estimated monthly cost:** ~$33 AUD (team + demo scale-to-zero), Marshall + testing-instance are always-on (minReplicas=1)
 
 ---
 

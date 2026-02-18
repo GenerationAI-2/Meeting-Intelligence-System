@@ -46,6 +46,10 @@ ENVIRONMENTS = {
         "server": "genai-sql-server.database.windows.net",
         "database": "mi-marshall",
     },
+    "testing-instance": {
+        "server": "mi-testing-instance-sql.database.windows.net",
+        "database": "mi-testing-instance",
+    },
 }
 
 MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"
