@@ -191,7 +191,7 @@ class ActionId(BaseModel):
 
 
 class ActionListFilter(BaseModel):
-    status: Optional[str] = Field("Open")
+    status: Optional[str] = Field(None)
     owner: Optional[str] = Field(None, max_length=128)
     meeting_id: Optional[int] = Field(None, gt=0)
     limit: Optional[int] = Field(50, gt=0, le=200)

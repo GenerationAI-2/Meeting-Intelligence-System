@@ -170,7 +170,7 @@ class TestActionValidation:
 
     def test_default_status(self):
         f = ActionListFilter()
-        assert f.status == "Open"
+        assert f.status is None
 
     def test_negative_action_id(self):
         with pytest.raises(ValidationError):
