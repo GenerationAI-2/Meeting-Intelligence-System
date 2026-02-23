@@ -8,10 +8,14 @@ function MeetingsList() {
     const [error, setError] = useState(null);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [isSearching, setIsSearching] = useState(false);
     const perPage = 20;
 
     useEffect(() => {
-        loadMeetings();
+        if (!isSearching) {
+            loadMeetings();
+        }
     }, [page]);
 
     async function loadMeetings() {
@@ -28,6 +32,38 @@ function MeetingsList() {
         } finally {
             setLoading(false);
         }
+    }
+
+    async function handleSearch(e) {
+        e.preventDefault();
+        const query = searchQuery.trim();
+        if (!query) return;
+        try {
+            setLoading(true);
+            setError(null);
+            const data = await meetingsApi.search(query);
+            setMeetings((data.results || []).map(r => ({
+                id: r.id,
+                title: r.title,
+                date: r.date,
+                attendees: r.attendees || null,
+                source: r.source || null,
+                snippet: r.snippet || null,
+            })));
+            setTotal(data.count || 0);
+            setIsSearching(true);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function clearSearch() {
+        setSearchQuery('');
+        setIsSearching(false);
+        setPage(1);
+        loadMeetings();
     }
 
     function formatDate(dateStr) {
@@ -64,6 +100,32 @@ function MeetingsList() {
                 <h1 className="text-2xl font-bold text-gray-900">Meetings</h1>
                 <p className="text-gray-600">Browse and view meeting transcripts</p>
             </div>
+
+            {/* Search */}
+            <form onSubmit={handleSearch} className="card mb-6">
+                <div className="flex gap-2">
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search meetings by keyword..."
+                        className="flex-1 rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    />
+                    <button type="submit" className="btn-primary">
+                        Search
+                    </button>
+                    {isSearching && (
+                        <button type="button" onClick={clearSearch} className="btn-secondary">
+                            Clear
+                        </button>
+                    )}
+                </div>
+                {isSearching && (
+                    <p className="text-sm text-gray-500 mt-2">
+                        {total} result{total !== 1 ? 's' : ''} for "{searchQuery}"
+                    </p>
+                )}
+            </form>
 
             <div className="card overflow-hidden">
                 <table className="min-w-full divide-y divide-gray-200">
@@ -118,7 +180,7 @@ function MeetingsList() {
                 </table>
 
                 {/* Pagination */}
-                {total > perPage && (
+                {!isSearching && total > perPage && (
                     <div className="bg-gray-50 px-4 py-3 flex items-center justify-between border-t border-gray-200">
                         <div className="text-sm text-gray-700">
                             Showing {((page - 1) * perPage) + 1} to {Math.min(page * perPage, total)} of {total}
