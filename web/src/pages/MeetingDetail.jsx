@@ -28,14 +28,19 @@ function MeetingDetail() {
 
     function formatDate(dateStr) {
         if (!dateStr) return '-';
-        return new Date(dateStr).toLocaleDateString('en-NZ', {
+        const d = new Date(dateStr);
+        const options = {
             weekday: 'long',
             day: 'numeric',
             month: 'long',
             year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
+        };
+        // Only show time if it's not midnight (i.e. time data was actually provided)
+        if (d.getHours() !== 0 || d.getMinutes() !== 0) {
+            options.hour = '2-digit';
+            options.minute = '2-digit';
+        }
+        return d.toLocaleDateString('en-NZ', options);
     }
 
     if (loading) {
