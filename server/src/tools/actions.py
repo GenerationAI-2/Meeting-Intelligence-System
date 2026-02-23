@@ -154,6 +154,71 @@ def get_action(action_id: int) -> dict:
 
 
 @retry_on_transient()
+def search_actions(query: str, limit: int = 10) -> dict:
+    """
+    Search actions by keyword in action text, owner, or notes.
+
+    Args:
+        query: Required. Search terms. Min 2 characters.
+               Searches in action text, owner, and notes fields.
+        limit: Maximum results to return. Default 10, max 50.
+
+    Returns:
+        {
+            "results": [...],  # Array of matching actions
+            "count": int       # Number of results returned
+        }
+
+        Each result contains: id, text, owner, status, due_date, meeting_id, snippet (context around match).
+    """
+    if not query or len(query) < 2:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "Query must be at least 2 characters"}
+    if limit < 1:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "Limit must be at least 1"}
+    if limit > 50:
+        limit = 50
+
+    try:
+        with get_db() as cursor:
+            search_pattern = f"%{query}%"
+            cursor.execute("""
+                SELECT ActionId, ActionText, Owner, DueDate, Status, MeetingId,
+                       CASE
+                           WHEN ActionText LIKE ? THEN LEFT(ActionText, 100)
+                           WHEN Owner LIKE ? THEN LEFT(Owner, 100)
+                           WHEN Notes LIKE ? THEN
+                               SUBSTRING(Notes,
+                                   GREATEST(CHARINDEX(?, Notes) - 50, 1),
+                                   150)
+                           ELSE ''
+                       END as Snippet
+                FROM Action
+                WHERE ActionText LIKE ? OR Owner LIKE ? OR Notes LIKE ?
+                ORDER BY CreatedAt DESC
+                OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
+            """, (search_pattern, search_pattern, search_pattern, query, search_pattern, search_pattern, search_pattern, limit))
+
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append({
+                    "id": row[0],
+                    "text": row[1],
+                    "owner": row[2],
+                    "due_date": row[3].isoformat() if row[3] else None,
+                    "status": row[4],
+                    "meeting_id": row[5],
+                    "snippet": row[6] or ""
+                })
+
+            return {"results": results, "count": len(results)}
+    except Exception as e:
+        if is_transient_error(e):
+            raise
+        return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+
+
+@retry_on_transient()
 def create_action(
     action_text: str,
     owner: str,
