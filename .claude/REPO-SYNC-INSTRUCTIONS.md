@@ -99,9 +99,11 @@ Before ending work in a repo:
 
 ---
 
-## Key Rule
+## Key Rules
 
 **Don't duplicate code into the Second Brain.** The `_repo-context.md` file is a summary — architecture, recent changes, API surface, tech debt. Not source code. If a Cowork agent needs actual code, it reads from the repo directly.
+
+**Scrap-and-reimplement rule.** If a fix or feature takes more than 3 iterative attempts and the code is getting messy, stop. Ask: "Knowing everything I know now, should I scrap this and reimplement cleanly?" This prevents repo cruft from compounding across failed approaches. Reimplement from scratch using the context you've built — don't keep layering patches.
 
 ---
 

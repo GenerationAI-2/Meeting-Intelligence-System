@@ -8,7 +8,6 @@ import re
 
 # === Shared Validators ===
 
-EMAIL_PATTERN = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 HTML_TAG_PATTERN = re.compile(r'</?[a-zA-Z][^>]*>')
 
 
@@ -25,14 +24,6 @@ def strip_html_tags(text: str) -> str:
     return HTML_TAG_PATTERN.sub('', text)
 
 
-def validate_email_format(email: str) -> str:
-    """Validate and normalise email address."""
-    email = email.strip().lower()
-    if not EMAIL_PATTERN.match(email):
-        raise ValueError(f'Invalid email format: {email}')
-    return email
-
-
 def validate_iso_date(date_str: str) -> str:
     """Validate ISO 8601 date or datetime string."""
     try:
@@ -42,15 +33,12 @@ def validate_iso_date(date_str: str) -> str:
     return date_str
 
 
-def validate_comma_emails(value: str) -> str:
-    """Validate comma-separated email list."""
+def sanitise_comma_list(value: str) -> str:
+    """Sanitise and normalise a comma-separated list of names."""
     if not value:
         return value
-    emails = [e.strip() for e in value.split(',') if e.strip()]
-    for email in emails:
-        if not EMAIL_PATTERN.match(email):
-            raise ValueError(f'Invalid email in list: {email}')
-    return ','.join(emails)
+    items = [strip_html_tags(item.strip()) for item in value.split(',') if item.strip()]
+    return ','.join(items)
 
 
 # === Meeting Schemas ===
@@ -65,7 +53,7 @@ class MeetingCreate(BaseModel):
     transcript: Optional[str] = Field(None, max_length=500000,
                                       description="Raw transcript (max 500KB)")
     attendees: Optional[str] = Field(None, max_length=5000,
-                                     description="Comma-separated email addresses")
+                                     description="Comma-separated attendee names")
     source: Optional[str] = Field("Manual", max_length=50,
                                   description="Source system")
     source_meeting_id: Optional[str] = Field(None, max_length=255,
@@ -94,7 +82,7 @@ class MeetingCreate(BaseModel):
     @classmethod
     def check_attendees(cls, v):
         if v:
-            return validate_comma_emails(v)
+            return sanitise_comma_list(v)
         return v
 
 
@@ -121,7 +109,7 @@ class MeetingUpdate(BaseModel):
     @classmethod
     def check_attendees(cls, v):
         if v:
-            return validate_comma_emails(v)
+            return sanitise_comma_list(v)
         return v
 
 
@@ -152,7 +140,7 @@ class ActionCreate(BaseModel):
     action_text: str = Field(..., min_length=1, max_length=10000,
                              description="Action description")
     owner: str = Field(..., min_length=1, max_length=128,
-                       description="Owner email address")
+                       description="Owner name")
     meeting_id: Optional[int] = Field(None, gt=0,
                                        description="Associated meeting ID")
     due_date: Optional[str] = Field(None,
@@ -160,15 +148,10 @@ class ActionCreate(BaseModel):
     notes: Optional[str] = Field(None, max_length=10000,
                                  description="Additional notes")
 
-    @field_validator('action_text', 'notes')
+    @field_validator('action_text', 'notes', 'owner')
     @classmethod
     def sanitise_text(cls, v):
         return strip_html_tags(v) if v else v
-
-    @field_validator('owner')
-    @classmethod
-    def check_owner(cls, v):
-        return validate_email_format(v)
 
     @field_validator('due_date')
     @classmethod
@@ -187,17 +170,10 @@ class ActionUpdate(BaseModel):
     due_date: Optional[str] = Field(None)
     notes: Optional[str] = Field(None, max_length=10000)
 
-    @field_validator('action_text', 'notes')
+    @field_validator('action_text', 'notes', 'owner')
     @classmethod
     def sanitise_text(cls, v):
         return strip_html_tags(v) if v else v
-
-    @field_validator('owner')
-    @classmethod
-    def check_owner(cls, v):
-        if v:
-            return validate_email_format(v)
-        return v
 
     @field_validator('due_date')
     @classmethod

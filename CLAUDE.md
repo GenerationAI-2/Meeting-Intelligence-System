@@ -1,7 +1,7 @@
 # Meeting Intelligence System - Agent Context
 
-**Last Updated:** 2026-02-12
-**Project Status:** Phase 3 IN PROGRESS — D workstream complete
+**Last Updated:** 2026-02-23
+**Project Status:** Phase 3 IN PROGRESS — Shape finalised 23 Feb
 **Owner:** Caleb Lucas
 
 ---
@@ -130,7 +130,7 @@ web/src/
 **Phases:**
 - Phase 1: SHIPPED (Jan 2026) — Core CRUD, MCP, web UI
 - Phase 2: CLOSED (5-12 Feb 2026) — Production hardening, IaC, auth refactor, tenant isolation, OAuth
-- Phase 3: IN PROGRESS (12 Feb 2026 –). D workstream (Platform Readiness) complete. A/B/C workstreams pending.
+- Phase 3: IN PROGRESS (12 Feb 2026 –). Shape finalised 23 Feb. See Second Brain `2-build/Planning_MI Phase 3 Shape_Final_23FEB26.docx`. Two-wave delivery: Wave 1 (bugs, search, Bicep, beta agreement) then Wave 2 (RBAC, schema endpoint, web UI edit, transcription guide).
 
 **What's working:**
 - 16 MCP tools for meetings (6), actions (7), decisions (3)
@@ -222,6 +222,87 @@ web/src/
 
 ---
 
+## Development Practices
+
+**Scrap-and-reimplement rule.** If a fix or feature takes more than 3 iterative attempts and the code is getting messy, stop. Ask: "Knowing everything I know now, should I scrap this and reimplement cleanly?" Don't keep layering patches.
+
+**Git worktree evaluation.** Before parallelising feature work across multiple branches, check:
+1. Are the features independent? (Different files/modules, no shared migrations) → ✅ Worktrees
+2. Do they touch the same models, schemas, or shared utils? → ❌ Sequential
+3. Is the repo large enough that each feature takes >30 min? → ✅ Worth parallelising
+4. Can merge conflicts be resolved cleanly? → ✅ Worktrees
+
+If all four pass, use git worktrees with separate Claude Code instances per branch.
+
+### Parallel Development Protocol (Phase 3+)
+
+Phase 3 uses parallel agent streams. Multiple Claude Code agents work on separate feature branches simultaneously, each in its own git worktree. Coordination docs live in Second Brain `2-build/`.
+
+**Branch naming:** `feature/wave{N}-{short-name}` (e.g., `feature/wave1-web-ui-fixes`)
+
+**Worktree setup:**
+```bash
+# From repo root
+git worktree add ../worktrees/wave1-a1 feature/wave1-web-ui-fixes
+```
+
+**File ownership rules:**
+- Each stream brief lists the exact files that stream may touch.
+- If a file is not in your "Files You Will Change" list, do NOT modify it.
+- `mcp_server.py` is a bottleneck — only one stream touches it at a time. It runs last in the merge sequence.
+- `api.py` — same rule. Only one stream at a time.
+
+**Merge order:** Smallest/most independent first. Streams that depend on earlier work merge later. The sprint plan (`2-build/sprint-wave1.md`) defines the exact order.
+
+**If you're an agent executing a stream brief:**
+1. Read this file (CLAUDE.md) first.
+2. Read your stream brief (it has everything you need).
+3. **Run the Pre-Flight Checklist in the brief. Every check must pass before you write any code. If any check fails, STOP and report — do not proceed.**
+4. Only touch files listed in your brief.
+5. Commit after every meaningful change.
+6. **Run the Post-Flight Checklist before reporting completion. Verify only in-scope files were changed, tests pass, and all commits are pushed.**
+7. Push to your feature branch when done.
+8. Do NOT merge into main — Caleb does that.
+9. Do NOT rebase onto other feature branches.
+10. Report completion using the structured format in the brief (includes pre-flight/post-flight status, files changed, test results).
+
+### Agent Behaviour Rules — READ THIS
+
+**Entry point:** Read these two files in this order, every time:
+1. `CLAUDE.md` (this file) — project context, architecture, gotchas
+2. Your stream brief (`2-build/briefs/wave1-a{N}.md`) — your specific scope and instructions
+
+**Ask before pivoting:**
+If the approach described in your brief isn't working or you think a different approach would be better, STOP and ask Caleb before changing direction. Do not silently deviate from the brief. Explain what you tried, why it's not working, and what you'd like to do instead. Wait for approval.
+
+**Escalation — death spiral detection:**
+If you have attempted the same fix or approach 3 times and it's still failing, you are in a death spiral. STOP IMMEDIATELY. Do not attempt a 4th time. Instead:
+1. Commit whatever working state you have (even if incomplete)
+2. Push to your feature branch
+3. Report exactly what you tried, what failed, and the error output
+4. Ask for help. Format: "BLOCKED on [what]. Tried [1], [2], [3]. Need guidance."
+
+**When you're unsure:**
+If something is ambiguous, unclear, or not covered in the brief — ASK. Do not guess. A 30-second question saves 30 minutes of wrong work. Specific things to ask about:
+- Any file not listed in your brief that you think needs changing
+- Any behaviour that contradicts what the brief describes
+- Any test failure you don't understand
+- Any dependency or import that doesn't exist
+
+**What NOT to do:**
+- Do not refactor code outside your scope, even if it's "better"
+- Do not install new dependencies without asking
+- Do not change test files unless your brief says to
+- Do not update CLAUDE.md (Caleb does this after merge)
+
+**Current sprint docs:**
+- Sprint plan: `2-build/sprint-wave1.md`
+- Stream briefs: `2-build/briefs/wave1-a{1-7}.md`
+- Orchestration runbook: `2-build/sprint-orchestration.md`
+- Brief template: `2-build/briefs/agent-brief-template.md`
+
+---
+
 ## Agent Instructions
 
 When working in this codebase:
@@ -231,11 +312,35 @@ When working in this codebase:
 3. **Follow existing patterns** — check the Patterns section above
 4. **Update this file** when you make significant changes
 5. **Deploy changes** using `./infra/deploy-bicep.sh [env]` - use unique image tags
+6. **Commit and push regularly** — see Git Discipline below
 
 **Before writing code:**
 - Confirm you understand the architecture
 - Check "What's Been Tried & Failed" to avoid repeating mistakes
 - For non-trivial changes, outline approach before implementing
+
+### Git Discipline — MANDATORY
+
+The local repo is the only copy of this codebase. If it gets lost, everything goes with it. Treat git push as your save button.
+
+**Rules:**
+- **Commit after every meaningful change.** Don't batch an entire session into one commit. If you've done something that works, commit it.
+- **Push to origin at end of every session.** No exceptions. If you're ending a session with unpushed commits, you haven't finished.
+- **Push before any risky operation.** Bicep changes, dependency upgrades, refactors — push what you have first.
+- **Use descriptive commit messages.** One line summary of what changed and why. Not "update files" or "fix stuff".
+- **Never force push to main.** If you've diverged, resolve it properly.
+- **Check for unpushed commits at session start.** Run `git log origin/main..HEAD --oneline`. If there are unpushed commits from a previous session, push them before doing anything else.
+
+**Session end git checklist:**
+```bash
+git status                          # Nothing unexpected staged/unstaged
+git add -A                          # Stage all changes
+git commit -m "Session: [summary]"  # Commit with clear message
+git push origin main                # Push to remote
+git log origin/main..HEAD --oneline # Should return nothing
+```
+
+If push fails (e.g. remote has diverged), do NOT force push. Pull with rebase (`git pull --rebase origin main`) and resolve conflicts.
 
 **Deployment notes:**
 - Always use a unique image tag: `./infra/deploy-bicep.sh marshall $(date +%Y%m%d%H%M%S)`
@@ -304,7 +409,7 @@ If you don't have access to Second Brain folder:
 |-------------|---------|----------|-------|---------|
 | Team | meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io | meeting-intelligence-team | 0-10 | Internal use |
 | Demo | meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io | meeting-intelligence | 0-10 | Mark sign-off |
-| Marshall | mi-marshall.delightfulpebble-aa90cd5c.australiaeast.azurecontainerapps.io | mi-marshall | 1-10 | First client (John Marshall) |
+| Marshall | mi-marshall.delightfulpebble-aa90cd5c.australiaeast.azurecontainerapps.io | mi-marshall | 1-10 | Test user (John Marshall) |
 | Testing Instance | mi-testing-instance.icycliff-e324f345.australiaeast.azurecontainerapps.io | mi-testing-instance | 1-10 | Client demos (Mark) |
 
 **Estimated monthly cost:** ~$33 AUD (team + demo scale-to-zero), Marshall + testing-instance are always-on (minReplicas=1)
@@ -345,6 +450,10 @@ If you don't have access to Second Brain folder:
 
 **BEFORE ending any session, CHECK and UPDATE these files:**
 
+### 0. Git Push (NON-NEGOTIABLE)
+
+Run the git checklist from "Git Discipline" above. Every session must end with all commits pushed to origin. No unpushed work. Ever.
+
 ### Mandatory Updates
 
 1. **CHANGELOG** (`/Users/caleblucas/Second Brain/Project Management/CHANGELOG.md`)
@@ -366,6 +475,37 @@ Check these triggers:
 Where to update:
 - Skills live at `/Users/caleblucas/Second Brain/Project Management/Skills/[skill-name]/SKILL.md`
 - New skills use template at `Templates/skill-template.md`
+
+### Repo & Project Clean (EVERY SESSION)
+
+Run a quick archive pass before pushing. No deletion — only move to `_archive/`.
+
+**Repo (`docs/`, root):**
+- Executed agent briefs → `docs/_archive/briefs/`
+- Executed implementation prompts → `docs/_archive/prompts/`
+- Completed audit outputs → `docs/_archive/audits/`
+- Superseded root files → `_archive/`
+
+**Second Brain project folder (`2-build/`, `3-delivery/`):**
+- Superseded planning docs → `_archive/` in their folder
+- Executed one-off briefs → `_archive/briefs/`
+- Draft versions replaced by Final → `_archive/`
+
+**Rules:**
+- Never delete. Always archive.
+- If a file was a one-off prompt or brief that's been executed, it's archive.
+- If a file has been superseded by a newer version (Draft → Final, v1 → v2), archive the old one.
+- ADRs, decision logs, operational runbooks, and reference docs are permanent — never archive these.
+- Active bug lists, backlogs, and status files stay in place.
+- When in doubt, leave it. Only archive what's clearly done.
+
+**Quick check:**
+```bash
+# Repo — anything in docs/ that's executed?
+ls docs/*.md | head -20
+# Second Brain — any drafts superseded by finals?
+ls "2-build/"*.docx 2>/dev/null
+```
 
 ### This File Updates (if applicable)
 

@@ -61,14 +61,15 @@ class TestMeetingValidation:
         m = MeetingCreate(title="Test", meeting_date="2026-02-09", tags="Sales, IMPORTANT")
         assert m.tags == "sales, important"
 
-    def test_invalid_attendee_email_rejected(self):
-        with pytest.raises(ValidationError):
-            MeetingCreate(title="Test", meeting_date="2026-02-09", attendees="not-an-email")
-
     def test_valid_attendees(self):
         m = MeetingCreate(title="Test", meeting_date="2026-02-09",
-                          attendees="john@example.com, jane@example.com")
-        assert m.attendees == "john@example.com,jane@example.com"
+                          attendees="John Marshall, Jane Smith")
+        assert m.attendees == "John Marshall,Jane Smith"
+
+    def test_attendees_html_stripped(self):
+        m = MeetingCreate(title="Test", meeting_date="2026-02-09",
+                          attendees="<script>alert('xss')</script>John, Jane")
+        assert "<script>" not in m.attendees
 
     def test_transcript_max_length(self):
         with pytest.raises(ValidationError):
@@ -127,36 +128,36 @@ class TestMeetingValidation:
 class TestActionValidation:
 
     def test_valid_action_create(self):
-        a = ActionCreate(action_text="Do something", owner="test@example.com")
-        assert a.owner == "test@example.com"
+        a = ActionCreate(action_text="Do something", owner="John Marshall")
+        assert a.owner == "John Marshall"
 
-    def test_invalid_owner_email(self):
-        with pytest.raises(ValidationError):
-            ActionCreate(action_text="Do something", owner="not-email")
+    def test_owner_accepts_plain_name(self):
+        a = ActionCreate(action_text="Do something", owner="Craig Corfield")
+        assert a.owner == "Craig Corfield"
 
-    def test_owner_normalised_to_lowercase(self):
-        a = ActionCreate(action_text="Do something", owner="Test@Example.COM")
-        assert a.owner == "test@example.com"
+    def test_owner_html_stripped(self):
+        a = ActionCreate(action_text="Do something", owner="<b>John</b>")
+        assert a.owner == "John"
 
     def test_empty_action_text_rejected(self):
         with pytest.raises(ValidationError):
-            ActionCreate(action_text="", owner="test@example.com")
+            ActionCreate(action_text="", owner="John Marshall")
 
     def test_action_text_max_length(self):
         with pytest.raises(ValidationError):
-            ActionCreate(action_text="x" * 10001, owner="test@example.com")
+            ActionCreate(action_text="x" * 10001, owner="John")
 
     def test_invalid_due_date(self):
         with pytest.raises(ValidationError):
-            ActionCreate(action_text="Do something", owner="t@t.com", due_date="31/02/2026")
+            ActionCreate(action_text="Do something", owner="John", due_date="31/02/2026")
 
     def test_valid_due_date(self):
-        a = ActionCreate(action_text="Do something", owner="t@t.com", due_date="2026-03-15")
+        a = ActionCreate(action_text="Do something", owner="John", due_date="2026-03-15")
         assert a.due_date == "2026-03-15"
 
     def test_notes_max_length(self):
         with pytest.raises(ValidationError):
-            ActionCreate(action_text="Do something", owner="t@t.com", notes="x" * 10001)
+            ActionCreate(action_text="Do something", owner="John", notes="x" * 10001)
 
     def test_invalid_status_rejected(self):
         with pytest.raises(ValidationError):
@@ -185,15 +186,11 @@ class TestActionValidation:
 
     def test_negative_meeting_id_in_action(self):
         with pytest.raises(ValidationError):
-            ActionCreate(action_text="Do something", owner="t@t.com", meeting_id=-1)
-
-    def test_update_owner_validation(self):
-        with pytest.raises(ValidationError):
-            ActionUpdate(owner="not-email")
+            ActionCreate(action_text="Do something", owner="John", meeting_id=-1)
 
     def test_update_valid_owner(self):
-        u = ActionUpdate(owner="new@example.com")
-        assert u.owner == "new@example.com"
+        u = ActionUpdate(owner="Craig Corfield")
+        assert u.owner == "Craig Corfield"
 
     def test_list_filter_limit_max(self):
         with pytest.raises(ValidationError):
