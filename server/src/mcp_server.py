@@ -277,6 +277,11 @@ def delete_action(action_id: int) -> dict:
     return actions.delete_action(validated.action_id)
 
 
+@mcp.tool(description="Search actions by keyword in action text, owner, or notes. Returns matching actions with context snippet. Use this to find specific action items across all meetings.", annotations=READ_ONLY)
+def search_actions(query: str, limit: int = 10) -> dict:
+    return actions.search_actions(query=query, limit=limit)
+
+
 # ============================================================================
 # DECISION TOOLS
 # ============================================================================
@@ -317,3 +322,8 @@ def delete_decision(decision_id: int) -> dict:
     except ValidationError as e:
         return _validation_error_response(e)
     return decisions.delete_decision(validated.decision_id)
+
+
+@mcp.tool(description="Search decisions by keyword in decision text or context. Returns matching decisions with meeting title and context snippet. Use this to find specific decisions across all meetings.", annotations=READ_ONLY)
+def search_decisions(query: str, limit: int = 10) -> dict:
+    return decisions.search_decisions(query=query, limit=limit)
