@@ -327,3 +327,13 @@ def delete_decision(decision_id: int) -> dict:
 @mcp.tool(description="Search decisions by keyword in decision text or context. Returns matching decisions with meeting title and context snippet. Use this to find specific decisions across all meetings.", annotations=READ_ONLY)
 def search_decisions(query: str, limit: int = 10) -> dict:
     return decisions.search_decisions(query=query, limit=limit)
+
+
+# ============================================================================
+# SCHEMA TOOL
+# ============================================================================
+
+@mcp.tool(description="Get field definitions, types, constraints, formats, and examples for all entities (Meeting, Action, Decision). Call this before creating or updating records to understand required fields and formats.", annotations=READ_ONLY)
+def get_schema() -> dict:
+    from .api import get_entity_schema
+    return get_entity_schema()

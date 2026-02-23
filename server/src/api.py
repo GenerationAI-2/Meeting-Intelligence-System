@@ -348,7 +348,172 @@ async def delete_decision_endpoint(decision_id: int, user: str = Depends(get_cur
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/schema")
+async def schema_endpoint():
+    """Return field definitions, constraints, and formats for all entities."""
+    return get_entity_schema()
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "meeting-intelligence"}
+
+
+def get_entity_schema() -> dict:
+    """Return structured schema describing all entities, fields, types, constraints, and examples.
+
+    Used by both the REST endpoint and the MCP get_schema tool. One source of truth.
+    """
+    return {
+        "version": "1.0",
+        "entities": {
+            "meeting": {
+                "description": "A meeting record with optional transcript and summary",
+                "fields": {
+                    "title": {
+                        "type": "string",
+                        "required": True,
+                        "max_length": 255,
+                        "description": "Meeting title. Include the date in the title for clarity.",
+                        "example": "Weekly Team Standup — 24 Feb 2026",
+                    },
+                    "meeting_date": {
+                        "type": "string",
+                        "required": True,
+                        "format": "ISO 8601 (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)",
+                        "description": "Date and time of the meeting. Include the actual time if known — do not default to midnight.",
+                        "example": "2026-02-24T09:30:00",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 50000,
+                        "format": "markdown",
+                        "description": "Meeting summary. Use markdown formatting: ## headings for sections, bullet points for items, **bold** for emphasis. Structure improves readability in the web UI.",
+                        "example": "## Key Discussion\n\n- **Budget approved** for Q2 marketing campaign\n- Timeline confirmed: launch by 15 March\n\n## Next Steps\n\n- Sarah to draft creative brief by Friday",
+                    },
+                    "transcript": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 500000,
+                        "format": "plain text",
+                        "description": "Raw transcript text.",
+                        "example": "Speaker 1: Let's start with the budget update...",
+                    },
+                    "attendees": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 5000,
+                        "format": "comma-separated names",
+                        "description": "Attendees as comma-separated full names, not email addresses.",
+                        "example": "Sarah Chen, James Wilson, Maria Lopez",
+                    },
+                    "source": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 50,
+                        "description": "Where the meeting was captured. Default 'Manual'. Use 'Fireflies' for Fireflies imports.",
+                        "example": "Manual",
+                    },
+                    "source_meeting_id": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 255,
+                        "description": "External system's meeting ID, used for deduplication.",
+                        "example": "ff_abc123",
+                    },
+                    "tags": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 1000,
+                        "format": "comma-separated, lowercase",
+                        "description": "Tags for categorisation. Comma-separated, lowercase.",
+                        "example": "strategy, quarterly-review",
+                    },
+                },
+            },
+            "action": {
+                "description": "An action item assigned to a person, optionally linked to a meeting",
+                "fields": {
+                    "action_text": {
+                        "type": "string",
+                        "required": True,
+                        "max_length": 10000,
+                        "description": "Clear, actionable description of what needs to be done.",
+                        "example": "Draft the Q2 marketing budget proposal",
+                    },
+                    "owner": {
+                        "type": "string",
+                        "required": True,
+                        "max_length": 128,
+                        "description": "Person responsible. Use their display name, not email address.",
+                        "example": "Sarah Chen",
+                    },
+                    "due_date": {
+                        "type": "string",
+                        "required": False,
+                        "format": "YYYY-MM-DD",
+                        "description": "Due date. Always extract and include a due date if one is mentioned or can be inferred from context (e.g. 'by Friday', 'next week', 'end of sprint'). Use ISO 8601 format.",
+                        "example": "2026-03-01",
+                    },
+                    "meeting_id": {
+                        "type": "integer",
+                        "required": False,
+                        "description": "Link to the meeting this action came from. References Meeting.id.",
+                        "example": 42,
+                    },
+                    "notes": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 10000,
+                        "description": "Additional context or details about the action.",
+                        "example": "Include comparison with Q1 actuals",
+                    },
+                },
+                "status_values": ["Open", "Complete", "Parked"],
+            },
+            "decision": {
+                "description": "A decision recorded during a meeting",
+                "fields": {
+                    "decision_text": {
+                        "type": "string",
+                        "required": True,
+                        "max_length": 10000,
+                        "description": "The decision that was made.",
+                        "example": "Approved Q2 marketing budget of $50,000",
+                    },
+                    "meeting_id": {
+                        "type": "integer",
+                        "required": True,
+                        "description": "The meeting where this decision was made. Must reference a valid meeting.",
+                        "example": 42,
+                    },
+                    "context": {
+                        "type": "string",
+                        "required": False,
+                        "max_length": 10000,
+                        "description": "Why this decision was made — the reasoning or discussion that led to it.",
+                        "example": "Team agreed after reviewing Q1 results showing 20% ROI on marketing spend",
+                    },
+                },
+            },
+        },
+        "relationships": [
+            {
+                "from": "action.meeting_id",
+                "to": "meeting",
+                "type": "many-to-one",
+                "required": False,
+                "description": "An action can optionally be linked to the meeting it came from.",
+            },
+            {
+                "from": "decision.meeting_id",
+                "to": "meeting",
+                "type": "many-to-one",
+                "required": True,
+                "description": "A decision must be linked to the meeting where it was made.",
+            },
+        ],
+        "cascade_deletes": "Deleting a meeting deletes all its linked actions and decisions.",
+    }
