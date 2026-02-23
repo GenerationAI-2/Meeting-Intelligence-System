@@ -4,8 +4,18 @@
 // Grants:
 // - Key Vault Secrets User (read secrets from Key Vault)
 //
+// Idempotency note:
+//   The role assignment uses a deterministic GUID name based on (keyVault.id,
+//   principalId, roleDefinitionId). Re-deploying with the same inputs produces
+//   the same name, so Azure treats it as an update (idempotent).
+//
+//   However, if the same role was previously assigned MANUALLY (with a different
+//   GUID name), this module will fail with RoleAssignmentExists. This is benign —
+//   the role IS assigned. deploy-bicep.sh Phase 5 ensures the role via CLI as a
+//   backup, so overall deployment succeeds regardless.
+//
 // NOT handled here:
-// - ACR Pull: handled automatically by Container Apps managed identity registry
+// - ACR Pull: ACR is in a different resource group — handled by deploy-bicep.sh Phase 4
 // - SQL access: must be done via SQL after deployment (CREATE USER FROM EXTERNAL PROVIDER)
 
 @description('Container App system-assigned managed identity principal ID')

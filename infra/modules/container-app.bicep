@@ -1,6 +1,14 @@
 // container-app.bicep — Container App + Environment + scaling + health probes
 // Part of Meeting Intelligence IaC (Stream A)
 // Port: 8000 (NOT 8080 — matches Dockerfile EXPOSE and deploy.sh target-port)
+//
+// ACR Pull note:
+//   The registry config uses identity:'system' which tells Container Apps to use
+//   its managed identity for ACR pulls. However, this does NOT create an AcrPull
+//   role assignment on the container registry. The ACR (meetingintelacr20260116)
+//   lives in a different resource group (meeting-intelligence-v2-rg), making
+//   cross-RG role assignment in Bicep complex. Instead, deploy-bicep.sh Phase 4
+//   assigns AcrPull via CLI after the Container App is created.
 
 @description('Environment name')
 param environmentName string
