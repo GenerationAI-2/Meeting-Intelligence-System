@@ -17,7 +17,7 @@ def list_actions(
 
     Args:
         status: Filter by status. Valid values: "Open", "Complete", "Parked".
-                Defaults to "Open" if not specified.
+                If not specified, returns all statuses.
         owner: Filter by owner (partial match, case-insensitive).
         meeting_id: Filter by source meeting ID.
         limit: Maximum results to return. Default 50, max 200.
@@ -49,13 +49,9 @@ def list_actions(
     conditions = []
     params = []
     
-    # Default to Open if no status specified
     if status:
         conditions.append("Status = ?")
         params.append(status)
-    else:
-        conditions.append("Status = ?")
-        params.append("Open")
     
     if owner:
         conditions.append("Owner LIKE ?")
