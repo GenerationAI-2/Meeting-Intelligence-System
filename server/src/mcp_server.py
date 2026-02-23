@@ -100,7 +100,7 @@ def search_meetings(query: str, limit: int = 10) -> dict:
     return meetings.search_meetings(query=validated.query, limit=validated.limit)
 
 
-@mcp.tool(description="Create a new meeting record.", annotations=WRITE)
+@mcp.tool(description="Create a new meeting record. Format the summary field as markdown: use ## headings for sections (e.g. ## Key Discussion Points, ## Decisions, ## Next Steps), bullet points for lists, and **bold** for key items. This ensures the summary renders well in the web UI.", annotations=WRITE)
 def create_meeting(
     title: str,
     meeting_date: str,
