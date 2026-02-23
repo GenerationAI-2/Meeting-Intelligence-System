@@ -158,6 +158,9 @@ function MeetingsList() {
                                         >
                                             {meeting.title}
                                         </Link>
+                                        {meeting.snippet && (
+                                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">{meeting.snippet}</p>
+                                        )}
                                     </td>
                                     <td className="table-cell text-gray-500">
                                         {formatDate(meeting.date)}
@@ -166,12 +169,14 @@ function MeetingsList() {
                                         {meeting.attendees || '-'}
                                     </td>
                                     <td className="table-cell">
-                                        <span className={`px-2 py-1 text-xs rounded-full ${meeting.source === 'Fireflies'
-                                                ? 'bg-purple-100 text-purple-800'
-                                                : 'bg-gray-100 text-gray-800'
-                                            }`}>
-                                            {meeting.source}
-                                        </span>
+                                        {meeting.source ? (
+                                            <span className={`px-2 py-1 text-xs rounded-full ${meeting.source === 'Fireflies'
+                                                    ? 'bg-purple-100 text-purple-800'
+                                                    : 'bg-gray-100 text-gray-800'
+                                                }`}>
+                                                {meeting.source}
+                                            </span>
+                                        ) : '-'}
                                     </td>
                                 </tr>
                             ))
