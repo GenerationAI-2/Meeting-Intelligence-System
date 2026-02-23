@@ -102,7 +102,7 @@ echo ""
 # PHASE 1: Build container image
 # =========================================================================
 echo "--- Phase 1: Building container image ---"
-az acr build \
+if ! az acr build \
     --registry "$ACR_NAME" \
     --image "${APP_NAME}:${IMAGE_TAG}" \
     --file "${REPO_ROOT}/server/Dockerfile" \
@@ -111,7 +111,23 @@ az acr build \
     --build-arg VITE_AZURE_TENANT_ID="$TENANT_ID" \
     --build-arg VITE_API_URL="/api" \
     "${REPO_ROOT}" \
-    --no-logs 2>&1 | tail -5
+    --no-logs 2>&1 | tail -20; then
+    echo ""
+    echo "ERROR: ACR build failed."
+    echo "Common causes:"
+    echo "  - Dockerfile syntax error or missing dependency"
+    echo "  - ACR authentication expired (run: az acr login --name $ACR_NAME)"
+    echo "  - Network connectivity to ACR"
+    echo ""
+    echo "To retry the build manually:"
+    echo "  az acr build --registry $ACR_NAME --image ${APP_NAME}:${IMAGE_TAG} \\"
+    echo "    --file ${REPO_ROOT}/server/Dockerfile \\"
+    echo "    --build-arg VITE_SPA_CLIENT_ID=$CLIENT_ID \\"
+    echo "    --build-arg VITE_API_CLIENT_ID=$CLIENT_ID \\"
+    echo "    --build-arg VITE_AZURE_TENANT_ID=$TENANT_ID \\"
+    echo "    --build-arg VITE_API_URL=/api ${REPO_ROOT}"
+    exit 1
+fi
 echo "Image pushed: ${ACR_NAME}.azurecr.io/${APP_NAME}:${IMAGE_TAG}"
 echo ""
 
@@ -219,8 +235,8 @@ fi
 # created, and Azure does NOT retry. We must wait, then force a new revision.
 if [ "$GREENFIELD" = true ]; then
     echo "--- Phase 7: Waiting for Key Vault RBAC propagation ---"
-    echo "Waiting 90 seconds for RBAC to propagate..."
-    sleep 90
+    echo "Waiting 180 seconds for RBAC to propagate..."
+    sleep 180
 
     echo "Forcing new revision to pick up Key Vault secrets..."
     az containerapp update -n "$APP_NAME" -g "$RESOURCE_GROUP" \
