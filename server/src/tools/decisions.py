@@ -125,6 +125,70 @@ def get_decision(decision_id: int) -> dict:
 
 
 @retry_on_transient()
+def search_decisions(query: str, limit: int = 10) -> dict:
+    """
+    Search decisions by keyword in decision text or context.
+
+    Args:
+        query: Required. Search terms. Min 2 characters.
+               Searches in decision text and context fields.
+        limit: Maximum results to return. Default 10, max 50.
+
+    Returns:
+        {
+            "results": [...],  # Array of matching decisions
+            "count": int       # Number of results returned
+        }
+
+        Each result contains: id, text, context, meeting_id, meeting_title, snippet (context around match).
+    """
+    if not query or len(query) < 2:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "Query must be at least 2 characters"}
+    if limit < 1:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "Limit must be at least 1"}
+    if limit > 50:
+        limit = 50
+
+    try:
+        with get_db() as cursor:
+            search_pattern = f"%{query}%"
+            cursor.execute("""
+                SELECT d.DecisionId, d.DecisionText, d.Context, d.MeetingId, m.Title,
+                       CASE
+                           WHEN d.DecisionText LIKE ? THEN LEFT(d.DecisionText, 100)
+                           WHEN d.Context LIKE ? THEN
+                               SUBSTRING(d.Context,
+                                   GREATEST(CHARINDEX(?, d.Context) - 50, 1),
+                                   150)
+                           ELSE ''
+                       END as Snippet
+                FROM Decision d
+                JOIN Meeting m ON d.MeetingId = m.MeetingId
+                WHERE d.DecisionText LIKE ? OR d.Context LIKE ?
+                ORDER BY d.CreatedAt DESC
+                OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
+            """, (search_pattern, search_pattern, query, search_pattern, search_pattern, limit))
+
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append({
+                    "id": row[0],
+                    "text": row[1],
+                    "context": row[2],
+                    "meeting_id": row[3],
+                    "meeting_title": row[4],
+                    "snippet": row[5] or ""
+                })
+
+            return {"results": results, "count": len(results)}
+    except Exception as e:
+        if is_transient_error(e):
+            raise
+        return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+
+
+@retry_on_transient()
 def create_decision(
     meeting_id: int,
     decision_text: str,
