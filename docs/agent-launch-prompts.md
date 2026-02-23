@@ -183,3 +183,132 @@ Rules:
 - Run the post-flight checklist before reporting completion.
 - Do NOT merge into main, rebase, install new dependencies, or refactor outside your scope.
 ```
+
+---
+---
+
+## Merge Agent
+
+**Run from:** repo root (`repos/meeting-intelligence`)
+**When:** After all Round 1 streams report complete and code review is done
+
+```
+You are a merge agent. You do NOT write feature code. Your only job is to merge completed feature branches into main in the correct order, running tests after each merge.
+
+Read CLAUDE.md in the repo root first — especially the "Git Discipline" section.
+
+Merge order (strict — do not reorder):
+1. feature/wave1-search-backend (A3)
+2. feature/wave1-web-ui-fixes (A1)
+3. feature/wave1-auth-refresh (A2)
+4. feature/wave1-bicep-iac (A4)
+
+For EACH branch, follow this exact sequence:
+
+1. Ensure you're on main and it's clean:
+   git checkout main
+   git pull origin main
+   git status  # must be clean
+
+2. Merge with no-ff:
+   git merge feature/wave1-{branch-name} --no-ff -m "Merge stream A{N}: {description}"
+
+3. Run server tests:
+   cd server && uv run python -m pytest && cd ..
+
+4. Run web build:
+   cd web && npm run build && cd ..
+
+5. If BOTH pass, push:
+   git push origin main
+
+6. If EITHER fails, STOP. Do not merge the next branch. Report:
+   "MERGE BLOCKED after A{N}. Tests: [pass/fail]. Build: [pass/fail]. Error: [details]"
+
+After A1 merge, also apply this one-line fix on main:
+- In server/src/schemas.py, find the ActionListFilter class and change the status field default from "Open" to None. This resolves a consistency issue flagged in code review where MCP still defaults to Open but the REST API no longer does.
+- Commit: git commit -am "fix: ActionListFilter status default None for consistency (review finding)"
+
+After ALL 4 merges are done and pushed, report:
+"All Round 1 merges complete. Main is clean. Tests: [count] passed. Ready for Round 2."
+
+Rules:
+- Do NOT write feature code
+- Do NOT refactor anything
+- Do NOT skip tests between merges
+- If a merge has conflicts, STOP and report — do not resolve them yourself
+- If tests fail after a merge, STOP and report — do not try to fix the code
+```
+
+---
+
+## Fix-Back Prompts
+
+Use these when a code review finds issues that need fixing before merge. Send to the ORIGINAL agent on its feature branch.
+
+### A1 Fix-Back — Search Result UI Issues
+
+**Worktree:** `repos/worktrees/wave1-a1`
+**Branch:** `feature/wave1-web-ui-fixes`
+
+```
+Your code review found two medium-severity issues in the MeetingsList search implementation. Fix these on your current feature branch.
+
+Issue 1 — Search results show "null" for source badge:
+The search API returns results without attendees and source fields. Your search result rendering uses the same MeetingCard/row component as the main list, which tries to display source as a badge. When source is undefined/null, it renders the literal text "null". Fix: conditionally render the source badge only when the value exists.
+
+Issue 2 — Search snippet not displayed:
+The search API returns a snippet field with context around the match, but your search results don't display it anywhere. The snippet is the most useful part of search results — without it, users can't see WHY a meeting matched. Fix: display the snippet below the meeting title in search results, styled as secondary text.
+
+After fixing:
+1. git add the changed files
+2. git commit -m "fix: handle null source badge and display search snippets (review findings)"
+3. Run post-flight checklist again (tests + build + scope check)
+4. git push origin feature/wave1-web-ui-fixes
+
+Report when done with updated post-flight results.
+
+Rules:
+- Only touch web/src/pages/MeetingsList.jsx — same file scope as before
+- Do NOT touch schemas.py or mcp_server.py — those are being fixed elsewhere
+- Do NOT touch any other files
+```
+
+### A4 Fix-Back — ACR Build Error Handling + RBAC Wait
+
+**Worktree:** `repos/worktrees/wave1-a4`
+**Branch:** `feature/wave1-bicep-iac`
+
+```
+Your code review found one bug and one should-fix in deploy-bicep.sh. Fix these on your current feature branch.
+
+Bug — ACR build error swallowed:
+In Phase 1, the az acr build command has --no-logs 2>&1 which redirects stderr to stdout. If the ACR build fails, the exit code doesn't propagate and the script continues with a broken image. Fix: capture the exit code properly. The ACR build failing should stop the entire script.
+
+Should-fix — RBAC wait too short:
+The RBAC propagation wait is 90 seconds. CLAUDE.md documents 5-10 minutes for RBAC propagation on greenfield deploys. 90s is optimistic. Increase to 180 seconds. The Phase 10 health check provides a safety net, but a longer wait reduces unnecessary crash-loop cycles.
+
+After fixing:
+1. git add infra/deploy-bicep.sh
+2. git commit -m "fix: ACR build error propagation and increase RBAC wait to 180s (review findings)"
+3. Run post-flight checklist again (tests + build + scope check)
+4. git push origin feature/wave1-bicep-iac
+
+Report when done with updated post-flight results.
+
+Rules:
+- Only touch infra/deploy-bicep.sh — same file scope as before
+- Do NOT touch any server/ or web/ files
+```
+
+---
+
+## A6 Additional Note
+
+When launching A6, append this to the end of the standard A6 launch prompt:
+
+```
+Additional from code review:
+- The search_meetings MCP tool description (line ~95 in mcp_server.py) currently says "title and transcript". Update it to "title, summary, and transcript" to reflect the A3 change that added Summary to the search. This is a one-line description fix — do it alongside your other work.
+- The list_actions MCP tool description says "Default returns Open actions only". After A1's fix, list_actions returns ALL statuses when no filter is set. Update the description to reflect this.
+```
