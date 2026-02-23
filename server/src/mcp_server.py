@@ -199,7 +199,7 @@ def get_action(action_id: int) -> dict:
     return actions.get_action(validated.action_id)
 
 
-@mcp.tool(description="Create a new action item. Status defaults to 'Open'.", annotations=WRITE)
+@mcp.tool(description="Create a new action item. Status defaults to 'Open'. IMPORTANT: Always extract and include the due_date if a deadline, timeframe, or date is mentioned in the meeting context (e.g. 'by Friday', 'next week', 'end of sprint'). Use ISO 8601 format (YYYY-MM-DD). If no date is mentioned, omit due_date.", annotations=WRITE)
 def create_action(
     action_text: str,
     owner: str,
