@@ -18,8 +18,12 @@ export const msalConfig = {
     },
 };
 
+// API scope — must be requested at login to establish a refresh token for the API resource.
+// Without this, acquireTokenSilent has no refresh token and fails after the access token expires (~1hr).
+const apiClientId = import.meta.env.VITE_API_CLIENT_ID || 'your-api-client-id';
+
 export const loginRequest = {
-    scopes: [],
+    scopes: [`api://${apiClientId}/access_as_user`],
 };
 
 export const apiConfig = {

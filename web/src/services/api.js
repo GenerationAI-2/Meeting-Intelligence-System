@@ -36,6 +36,28 @@ async function fetchApi(endpoint, options = {}) {
         headers,
     });
 
+    // On 401, force a fresh token and retry once
+    if (response.status === 401 && !options._retried) {
+        let freshToken = null;
+        try {
+            freshToken = await getAccessToken({ forceRefresh: true });
+        } catch (e) {
+            console.error("Failed to refresh token on 401", e);
+        }
+        if (freshToken) {
+            headers['Authorization'] = `Bearer ${freshToken}`;
+            const retryResponse = await fetch(url, {
+                ...options,
+                headers,
+                _retried: true,
+            });
+            if (!retryResponse.ok) {
+                throw new Error(`API error: ${retryResponse.status}`);
+            }
+            return retryResponse.json();
+        }
+    }
+
     if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
     }

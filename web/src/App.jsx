@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
-import { InteractionStatus } from '@azure/msal-browser';
+import { InteractionRequiredAuthError, InteractionStatus } from '@azure/msal-browser';
 import Layout from './components/Layout';
 import MeetingsList from './pages/MeetingsList';
 import MeetingDetail from './pages/MeetingDetail';
@@ -17,17 +17,24 @@ function AuthenticationHandler({ children }) {
     const { instance, accounts } = useMsal();
 
     useEffect(() => {
-        setAccessTokenProvider(async () => {
+        setAccessTokenProvider(async (options = {}) => {
             if (accounts.length > 0) {
                 const request = {
-                    // Use the API Client ID and the exposed scope
                     scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
-                    account: accounts[0]
+                    account: accounts[0],
+                    forceRefresh: options.forceRefresh || false,
                 };
                 try {
                     const response = await instance.acquireTokenSilent(request);
                     return response.accessToken;
                 } catch (error) {
+                    if (error instanceof InteractionRequiredAuthError) {
+                        await instance.acquireTokenRedirect({
+                            scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
+                            account: accounts[0],
+                        });
+                        return null;
+                    }
                     console.warn("Silent token acquisition failed", error);
                     return null;
                 }
