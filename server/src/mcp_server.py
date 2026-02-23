@@ -100,7 +100,7 @@ def search_meetings(query: str, limit: int = 10) -> dict:
     return meetings.search_meetings(query=validated.query, limit=validated.limit)
 
 
-@mcp.tool(description="Create a new meeting record.", annotations=WRITE)
+@mcp.tool(description="Create a new meeting record. Format the summary field as markdown: use ## headings for sections (e.g. ## Key Discussion Points, ## Decisions, ## Next Steps), bullet points for lists, and **bold** for key items. This ensures the summary renders well in the web UI.", annotations=WRITE)
 def create_meeting(
     title: str,
     meeting_date: str,
@@ -199,7 +199,7 @@ def get_action(action_id: int) -> dict:
     return actions.get_action(validated.action_id)
 
 
-@mcp.tool(description="Create a new action item. Status defaults to 'Open'.", annotations=WRITE)
+@mcp.tool(description="Create a new action item. Status defaults to 'Open'. IMPORTANT: Always extract and include the due_date if a deadline, timeframe, or date is mentioned in the meeting context (e.g. 'by Friday', 'next week', 'end of sprint'). Use ISO 8601 format (YYYY-MM-DD). If no date is mentioned, omit due_date.", annotations=WRITE)
 def create_action(
     action_text: str,
     owner: str,
@@ -277,6 +277,11 @@ def delete_action(action_id: int) -> dict:
     return actions.delete_action(validated.action_id)
 
 
+@mcp.tool(description="Search actions by keyword in action text, owner, or notes. Returns matching actions with context snippet. Use this to find specific action items across all meetings.", annotations=READ_ONLY)
+def search_actions(query: str, limit: int = 10) -> dict:
+    return actions.search_actions(query=query, limit=limit)
+
+
 # ============================================================================
 # DECISION TOOLS
 # ============================================================================
@@ -317,3 +322,8 @@ def delete_decision(decision_id: int) -> dict:
     except ValidationError as e:
         return _validation_error_response(e)
     return decisions.delete_decision(validated.decision_id)
+
+
+@mcp.tool(description="Search decisions by keyword in decision text or context. Returns matching decisions with meeting title and context snippet. Use this to find specific decisions across all meetings.", annotations=READ_ONLY)
+def search_decisions(query: str, limit: int = 10) -> dict:
+    return decisions.search_decisions(query=query, limit=limit)
