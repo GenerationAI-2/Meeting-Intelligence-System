@@ -147,11 +147,11 @@ def get_meeting(meeting_id: int) -> dict:
 @retry_on_transient()
 def search_meetings(query: str, limit: int = 10) -> dict:
     """
-    Search meetings by keyword in title or transcript.
+    Search meetings by keyword in title, summary, or transcript.
 
     Args:
         query: Required. Search terms. Min 2 characters.
-               Searches in both title and transcript fields.
+               Searches in title, summary, and transcript fields.
         limit: Maximum results to return. Default 10, max 50.
 
     Returns:
@@ -174,19 +174,23 @@ def search_meetings(query: str, limit: int = 10) -> dict:
             search_pattern = f"%{query}%"
             cursor.execute("""
                 SELECT MeetingId, Title, MeetingDate,
-                       CASE 
+                       CASE
                            WHEN Title LIKE ? THEN LEFT(Title, 100)
-                           WHEN RawTranscript LIKE ? THEN 
-                               SUBSTRING(RawTranscript, 
+                           WHEN Summary LIKE ? THEN
+                               SUBSTRING(Summary,
+                                   GREATEST(CHARINDEX(?, Summary) - 50, 1),
+                                   150)
+                           WHEN RawTranscript LIKE ? THEN
+                               SUBSTRING(RawTranscript,
                                    GREATEST(CHARINDEX(?, RawTranscript) - 50, 1),
                                    150)
                            ELSE ''
                        END as Snippet
                 FROM Meeting
-                WHERE Title LIKE ? OR RawTranscript LIKE ?
+                WHERE Title LIKE ? OR Summary LIKE ? OR RawTranscript LIKE ?
                 ORDER BY MeetingDate DESC
                 OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
-            """, (search_pattern, search_pattern, query, search_pattern, search_pattern, limit))
+            """, (search_pattern, search_pattern, query, search_pattern, query, search_pattern, search_pattern, search_pattern, limit))
             
             rows = cursor.fetchall()
             results = []
