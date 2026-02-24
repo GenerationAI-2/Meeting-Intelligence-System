@@ -92,6 +92,8 @@ export const actionsApi = {
             method: 'PATCH',
             body: JSON.stringify({ status }),
         }),
+
+    owners: () => fetchApi('/actions/owners'),
 };
 
 // Decisions API

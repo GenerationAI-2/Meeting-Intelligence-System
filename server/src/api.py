@@ -223,6 +223,15 @@ async def list_actions_endpoint(
     return result
 
 
+@app.get("/api/actions/owners")
+async def list_action_owners_endpoint(user: str = Depends(get_current_user)):
+    """Get distinct action owners for filter dropdown."""
+    result = actions.get_distinct_owners()
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
 @app.get("/api/actions/{action_id}")
 async def get_action_endpoint(action_id: int, user: str = Depends(get_current_user)):
     """Get action details."""
@@ -390,7 +399,7 @@ def get_entity_schema() -> dict:
                         "required": False,
                         "max_length": 50000,
                         "format": "markdown",
-                        "description": "Meeting summary. Use markdown formatting: ## headings for sections, bullet points for items, **bold** for emphasis. Structure improves readability in the web UI.",
+                        "description": "Meeting summary. Use markdown formatting: ## headings for sections, bullet points (- or *) for items, **bold** for emphasis. Summaries over 500 characters without any markdown formatting will be rejected. Structure improves readability in the web UI.",
                         "example": "## Key Discussion\n\n- **Budget approved** for Q2 marketing campaign\n- Timeline confirmed: launch by 15 March\n\n## Next Steps\n\n- Sarah to draft creative brief by Friday",
                     },
                     "transcript": {
@@ -454,7 +463,7 @@ def get_entity_schema() -> dict:
                         "type": "string",
                         "required": False,
                         "format": "YYYY-MM-DD",
-                        "description": "Due date. Always extract and include a due date if one is mentioned or can be inferred from context (e.g. 'by Friday', 'next week', 'end of sprint'). Use ISO 8601 format.",
+                        "description": "Due date in ISO 8601 format. ALWAYS extract and include a due date if one is mentioned or can be inferred from context (e.g. 'by Friday', 'next week', 'end of sprint'). Convert relative dates to absolute. Non-ISO formats will be rejected.",
                         "example": "2026-03-01",
                     },
                     "meeting_id": {

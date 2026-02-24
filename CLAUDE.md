@@ -133,7 +133,7 @@ web/src/
 - Phase 3: IN PROGRESS (12 Feb 2026 –). Shape finalised 23 Feb. See Second Brain `2-build/Planning_MI Phase 3 Shape_Final_23FEB26.docx`. Two-wave delivery: Wave 1 (bugs, search, Bicep, beta agreement) then Wave 2 (RBAC, schema endpoint, web UI edit, transcription guide).
 
 **What's working:**
-- 16 MCP tools for meetings (6), actions (7), decisions (3)
+- 17 MCP tools for meetings (6), actions (7), decisions (4)
 - 6 database tables: Meeting, Action, Decision, ClientToken, OAuthClient, RefreshTokenUsage + `_MigrationHistory` tracking table
 - 4 transport methods: Streamable HTTP (`/mcp`), SSE (`/sse`), stdio (local), REST (`/api/*`)
 - Full CRUD for meetings, actions, decisions via MCP tools. Web UI is read-only for creation (no create/edit forms); only action status updates are supported in UI.
@@ -145,7 +145,7 @@ web/src/
   - OAuth 2.1 with DCR + PKCE for ChatGPT (hardened: redirect URI allowlist + token-gated consent + origin-based resource indicator matching + refresh token rotation + token revocation endpoint)
 - DB-backed client tokens with SHA256 hashing, 5-min in-memory cache
 - Connection pooling (QueuePool) with retry-on-transient decorator (17 Azure SQL error codes)
-- Pydantic validation on all 16 MCP tools with field limits
+- Pydantic validation on all 17 MCP tools with field limits
 - Tiered rate limiting: MCP 120/min per-token, OAuth 20/min per-IP, API 60/min per-IP. Returns 429 with Retry-After header.
 - Attendee and tag filtering on meetings (MCP only; web UI has no attendee filter)
 - Transcript storage and search (keyword search with snippet extraction)
@@ -189,7 +189,6 @@ web/src/
 - ~~Cold start delay~~ measured at 209ms TTFB (D14) — not an issue
 - No email notifications for actions
 - ChatGPT requires connector to be manually enabled in Tools menu per chat
-- `get_decision()` exists in `tools/decisions.py` but has no MCP wrapper
 - `ExpandableText` component exists in web UI but is unused (leftover from earlier approach)
 - `meetingsApi.search()` defined in `web/src/services/api.js` but not used in any UI component
 - Marshall pending D16 rollout — migration 003 + ChatGPT re-auth required
@@ -422,7 +421,7 @@ If you don't have access to Second Brain folder:
 |----------|-------|
 | Meetings | list_meetings, get_meeting, search_meetings, create_meeting, update_meeting, delete_meeting |
 | Actions | list_actions, get_action, create_action, update_action, complete_action, park_action, delete_action |
-| Decisions | list_decisions, create_decision, delete_decision |
+| Decisions | list_decisions, get_decision, create_decision, delete_decision |
 
 ---
 

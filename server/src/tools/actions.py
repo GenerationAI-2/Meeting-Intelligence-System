@@ -97,6 +97,22 @@ def list_actions(
 
 
 @retry_on_transient()
+def get_distinct_owners() -> dict:
+    """Get distinct owner values from the Action table."""
+    try:
+        with get_db() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT Owner FROM Action WHERE Owner IS NOT NULL ORDER BY Owner"
+            )
+            owners = [row[0] for row in cursor.fetchall()]
+            return {"owners": owners}
+    except Exception as e:
+        if is_transient_error(e):
+            raise
+        return {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+
+
+@retry_on_transient()
 def get_action(action_id: int) -> dict:
     """
     Get full details of a specific action.

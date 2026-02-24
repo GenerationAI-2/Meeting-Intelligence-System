@@ -114,13 +114,16 @@ cleanup_firewall() {
     if [ "$FW_RULE_CREATED" = true ]; then
         echo ""
         echo "--- Cleaning up temporary SQL firewall rule ---"
-        if az sql server firewall-rule delete \
+        cd "$REPO_ROOT" 2>/dev/null || true
+        local output
+        if output=$(az sql server firewall-rule delete \
             --server "$SQL_SERVER_NAME" -g "$RESOURCE_GROUP" \
-            --name "$FW_RULE_NAME" --yes 2>/dev/null; then
+            --name "$FW_RULE_NAME" --yes 2>&1); then
             echo "Firewall rule '${FW_RULE_NAME}': removed"
         else
-            echo "WARNING: Could not remove firewall rule '${FW_RULE_NAME}'"
-            echo "Manual cleanup: az sql server firewall-rule delete --server $SQL_SERVER_NAME -g $RESOURCE_GROUP --name $FW_RULE_NAME --yes"
+            echo "ERROR: Failed to remove firewall rule '${FW_RULE_NAME}'"
+            echo "  Output: ${output}"
+            echo "  Manual cleanup: az sql server firewall-rule delete --server $SQL_SERVER_NAME -g $RESOURCE_GROUP --name $FW_RULE_NAME --yes"
         fi
     fi
 }

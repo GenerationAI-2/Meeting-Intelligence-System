@@ -8,9 +8,16 @@ function ActionsList() {
     const [error, setError] = useState(null);
     const [statusFilter, setStatusFilter] = useState('Open');
     const [ownerFilter, setOwnerFilter] = useState('');
+    const [owners, setOwners] = useState([]);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
+    const [sortColumn, setSortColumn] = useState(null);
+    const [sortDirection, setSortDirection] = useState(null);
     const perPage = 50;
+
+    useEffect(() => {
+        actionsApi.owners().then(data => setOwners(data.owners || [])).catch(() => {});
+    }, []);
 
     useEffect(() => {
         loadActions();
@@ -39,12 +46,23 @@ function ActionsList() {
     async function handleStatusChange(actionId, newStatus) {
         try {
             await actionsApi.updateStatus(actionId, newStatus);
-            // Update local state
             setActions(actions.map(a =>
                 a.id === actionId ? { ...a, status: newStatus } : a
             ));
         } catch (err) {
             console.error('Failed to update status:', err);
+        }
+    }
+
+    function handleSort(column) {
+        if (sortColumn !== column) {
+            setSortColumn(column);
+            setSortDirection('asc');
+        } else if (sortDirection === 'asc') {
+            setSortDirection('desc');
+        } else {
+            setSortColumn(null);
+            setSortDirection(null);
         }
     }
 
@@ -54,6 +72,27 @@ function ActionsList() {
             day: 'numeric',
             month: 'short',
             year: 'numeric',
+        });
+    }
+
+    const sortedActions = [...actions];
+    if (sortColumn) {
+        sortedActions.sort((a, b) => {
+            let aVal = a[sortColumn];
+            let bVal = b[sortColumn];
+            if (aVal == null && bVal == null) return 0;
+            if (aVal == null) return 1;
+            if (bVal == null) return -1;
+            if (sortColumn === 'due_date') {
+                aVal = new Date(aVal);
+                bVal = new Date(bVal);
+            } else {
+                aVal = aVal.toLowerCase();
+                bVal = bVal.toLowerCase();
+            }
+            if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+            return 0;
         });
     }
 
@@ -80,7 +119,7 @@ function ActionsList() {
                         <select
                             value={statusFilter}
                             onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-                            className="rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            className="rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2"
                         >
                             <option value="All">All</option>
                             <option value="Open">Open</option>
@@ -90,13 +129,16 @@ function ActionsList() {
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Owner</label>
-                        <input
-                            type="text"
+                        <select
                             value={ownerFilter}
                             onChange={(e) => { setOwnerFilter(e.target.value); setPage(1); }}
-                            placeholder="Filter by owner..."
-                            className="rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                        />
+                            className="rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2"
+                        >
+                            <option value="">All owners</option>
+                            {owners.map((owner) => (
+                                <option key={owner} value={owner}>{owner}</option>
+                            ))}
+                        </select>
                     </div>
                 </div>
             </div>
@@ -112,21 +154,27 @@ function ActionsList() {
                     <thead className="bg-gray-50">
                         <tr>
                             <th className="table-header">Action</th>
-                            <th className="table-header">Owner</th>
-                            <th className="table-header">Due Date</th>
-                            <th className="table-header">Status</th>
+                            <th className="table-header cursor-pointer select-none" onClick={() => handleSort('owner')}>
+                                Owner {sortColumn === 'owner' && (sortDirection === 'asc' ? '\u25B2' : '\u25BC')}
+                            </th>
+                            <th className="table-header cursor-pointer select-none" onClick={() => handleSort('due_date')}>
+                                Due Date {sortColumn === 'due_date' && (sortDirection === 'asc' ? '\u25B2' : '\u25BC')}
+                            </th>
+                            <th className="table-header cursor-pointer select-none" onClick={() => handleSort('status')}>
+                                Status {sortColumn === 'status' && (sortDirection === 'asc' ? '\u25B2' : '\u25BC')}
+                            </th>
                             <th className="table-header">Meeting</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {actions.length === 0 ? (
+                        {sortedActions.length === 0 ? (
                             <tr>
                                 <td colSpan="5" className="table-cell text-center text-gray-500 py-8">
                                     No actions found
                                 </td>
                             </tr>
                         ) : (
-                            actions.map((action) => (
+                            sortedActions.map((action) => (
                                 <tr
                                     key={action.id}
                                     className="hover:bg-gray-50 cursor-pointer"

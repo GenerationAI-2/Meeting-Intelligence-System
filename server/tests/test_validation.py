@@ -247,6 +247,14 @@ class TestDecisionValidation:
         d = DecisionId(decision_id=5)
         assert d.decision_id == 5
 
+    def test_decision_id_string_rejected(self):
+        with pytest.raises(ValidationError):
+            DecisionId(decision_id="abc")
+
+    def test_decision_id_float_coerced(self):
+        d = DecisionId(decision_id=3.0)
+        assert d.decision_id == 3
+
     def test_list_filter_defaults(self):
         f = DecisionListFilter()
         assert f.limit == 50
@@ -275,3 +283,109 @@ class TestStatusUpdate:
     def test_all_not_valid_for_status_update(self):
         with pytest.raises(ValidationError):
             StatusUpdate(status="all")
+
+
+class TestDueDateValidation:
+    """B7: due_date format enforcement."""
+
+    def test_valid_iso_date(self):
+        a = ActionCreate(action_text="Do task", owner="Alice", due_date="2026-03-15")
+        assert a.due_date == "2026-03-15"
+
+    def test_relative_date_rejected(self):
+        with pytest.raises(ValidationError, match="ISO 8601"):
+            ActionCreate(action_text="Do task", owner="Alice", due_date="next Friday")
+
+    def test_slash_format_rejected(self):
+        with pytest.raises(ValidationError, match="ISO 8601"):
+            ActionCreate(action_text="Do task", owner="Alice", due_date="2026/03/15")
+
+    def test_text_date_rejected(self):
+        with pytest.raises(ValidationError, match="ISO 8601"):
+            ActionCreate(action_text="Do task", owner="Alice", due_date="March 15")
+
+    def test_end_of_sprint_rejected(self):
+        with pytest.raises(ValidationError, match="ISO 8601"):
+            ActionCreate(action_text="Do task", owner="Alice", due_date="end of sprint")
+
+    def test_none_accepted(self):
+        a = ActionCreate(action_text="Do task", owner="Alice", due_date=None)
+        assert a.due_date is None
+
+    def test_empty_string_treated_as_none(self):
+        a = ActionCreate(action_text="Do task", owner="Alice", due_date="")
+        assert a.due_date is None
+
+    def test_whitespace_string_treated_as_none(self):
+        a = ActionCreate(action_text="Do task", owner="Alice", due_date="  ")
+        assert a.due_date is None
+
+    def test_update_also_validates(self):
+        with pytest.raises(ValidationError, match="ISO 8601"):
+            ActionUpdate(due_date="next week")
+
+    def test_update_empty_string_treated_as_none(self):
+        a = ActionUpdate(due_date="")
+        assert a.due_date is None
+
+
+class TestSummaryMarkdownValidation:
+    """B8: summary markdown enforcement for long summaries."""
+
+    def test_short_plain_text_accepted(self):
+        """Summaries under 500 chars don't need markdown."""
+        m = MeetingCreate(title="Test", meeting_date="2026-02-24",
+                          summary="Quick standup. Discussed sprint progress, no blockers.")
+        assert m.summary is not None
+
+    def test_long_plain_text_rejected(self):
+        """Summaries over 500 chars without markdown are rejected."""
+        plain_text = "This is a long meeting summary. " * 20  # ~640 chars
+        with pytest.raises(ValidationError, match="markdown formatted"):
+            MeetingCreate(title="Test", meeting_date="2026-02-24", summary=plain_text)
+
+    def test_long_text_with_heading_accepted(self):
+        """A single ## heading is enough to pass."""
+        summary = "## Overview\n\n" + "Discussion point about the project. " * 20
+        m = MeetingCreate(title="Test", meeting_date="2026-02-24", summary=summary)
+        assert m.summary is not None
+
+    def test_long_text_with_bullets_accepted(self):
+        """Bullet points are enough to pass."""
+        summary = "- First item discussed\n" + "More details about the meeting. " * 20
+        m = MeetingCreate(title="Test", meeting_date="2026-02-24", summary=summary)
+        assert m.summary is not None
+
+    def test_long_text_with_bold_accepted(self):
+        """Bold text is enough to pass."""
+        summary = "The **key decision** was made. " + "More context about the meeting. " * 20
+        m = MeetingCreate(title="Test", meeting_date="2026-02-24", summary=summary)
+        assert m.summary is not None
+
+    def test_long_text_with_star_bullets_accepted(self):
+        """Star bullets are enough to pass."""
+        summary = "* First item\n" + "Additional discussion notes. " * 20
+        m = MeetingCreate(title="Test", meeting_date="2026-02-24", summary=summary)
+        assert m.summary is not None
+
+    def test_none_summary_accepted(self):
+        m = MeetingCreate(title="Test", meeting_date="2026-02-24", summary=None)
+        assert m.summary is None
+
+    def test_exactly_500_chars_plain_text_accepted(self):
+        """Boundary: 500 chars exactly should pass without markdown."""
+        summary = "x" * 500
+        m = MeetingCreate(title="Test", meeting_date="2026-02-24", summary=summary)
+        assert len(m.summary) == 500
+
+    def test_501_chars_plain_text_rejected(self):
+        """Boundary: 501 chars without markdown should be rejected."""
+        summary = "x" * 501
+        with pytest.raises(ValidationError, match="markdown formatted"):
+            MeetingCreate(title="Test", meeting_date="2026-02-24", summary=summary)
+
+    def test_update_also_validates(self):
+        """MeetingUpdate should enforce the same rule."""
+        plain_text = "This is a long update summary. " * 20
+        with pytest.raises(ValidationError, match="markdown formatted"):
+            MeetingUpdate(summary=plain_text)

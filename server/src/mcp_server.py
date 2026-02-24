@@ -324,6 +324,15 @@ def delete_decision(decision_id: int) -> dict:
     return decisions.delete_decision(validated.decision_id)
 
 
+@mcp.tool(description="Get full details of a specific decision including context and creator.", annotations=READ_ONLY)
+def get_decision(decision_id: int) -> dict:
+    try:
+        validated = DecisionId(decision_id=decision_id)
+    except ValidationError as e:
+        return _validation_error_response(e)
+    return decisions.get_decision(validated.decision_id)
+
+
 @mcp.tool(description="Search decisions by keyword in decision text or context. Returns matching decisions with meeting title and context snippet. Use this to find specific decisions across all meetings.", annotations=READ_ONLY)
 def search_decisions(query: str, limit: int = 10) -> dict:
     return decisions.search_decisions(query=query, limit=limit)

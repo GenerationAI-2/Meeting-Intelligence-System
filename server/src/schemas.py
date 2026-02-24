@@ -9,6 +9,7 @@ import re
 # === Shared Validators ===
 
 HTML_TAG_PATTERN = re.compile(r'</?[a-zA-Z][^>]*>')
+MARKDOWN_PATTERN = re.compile(r'(^|\n)#{1,6}\s|^[-*]\s|\*\*', re.MULTILINE)
 
 
 def strip_html_tags(text: str) -> str:
@@ -66,6 +67,16 @@ class MeetingCreate(BaseModel):
     def sanitise_text(cls, v):
         return strip_html_tags(v) if v else v
 
+    @field_validator('summary')
+    @classmethod
+    def check_summary_markdown(cls, v):
+        if v and len(v) > 500 and not MARKDOWN_PATTERN.search(v):
+            raise ValueError(
+                "summary should be markdown formatted with headings (##), bullet points (- or *), "
+                "or bold (**) for readability. See get_schema for format guidance."
+            )
+        return v
+
     @field_validator('meeting_date')
     @classmethod
     def check_meeting_date(cls, v):
@@ -97,6 +108,16 @@ class MeetingUpdate(BaseModel):
     @classmethod
     def sanitise_text(cls, v):
         return strip_html_tags(v) if v else v
+
+    @field_validator('summary')
+    @classmethod
+    def check_summary_markdown(cls, v):
+        if v and len(v) > 500 and not MARKDOWN_PATTERN.search(v):
+            raise ValueError(
+                "summary should be markdown formatted with headings (##), bullet points (- or *), "
+                "or bold (**) for readability. See get_schema for format guidance."
+            )
+        return v
 
     @field_validator('tags')
     @classmethod
@@ -156,11 +177,16 @@ class ActionCreate(BaseModel):
     @field_validator('due_date')
     @classmethod
     def check_due_date(cls, v):
+        if v is not None and isinstance(v, str) and v.strip() == '':
+            return None
         if v:
             try:
                 date.fromisoformat(v)
             except ValueError:
-                raise ValueError('Invalid date format. Use YYYY-MM-DD')
+                raise ValueError(
+                    "due_date must be ISO 8601 format (YYYY-MM-DD), e.g. '2026-03-15'. "
+                    "Convert relative dates like 'next Friday' to absolute dates before submitting."
+                )
         return v
 
 
@@ -178,11 +204,16 @@ class ActionUpdate(BaseModel):
     @field_validator('due_date')
     @classmethod
     def check_due_date(cls, v):
+        if v is not None and isinstance(v, str) and v.strip() == '':
+            return None
         if v:
             try:
                 date.fromisoformat(v)
             except ValueError:
-                raise ValueError('Invalid date format. Use YYYY-MM-DD')
+                raise ValueError(
+                    "due_date must be ISO 8601 format (YYYY-MM-DD), e.g. '2026-03-15'. "
+                    "Convert relative dates like 'next Friday' to absolute dates before submitting."
+                )
         return v
 
 
