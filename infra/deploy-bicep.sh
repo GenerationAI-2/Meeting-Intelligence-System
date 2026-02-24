@@ -138,7 +138,7 @@ echo "--- Phase 2: Creating resource group ---"
 az group create \
     --name "$RESOURCE_GROUP" \
     --location "$LOCATION" \
-    --tags environment="$ENV" project=meeting-intelligence owner=caleb.lucas@accretiveai.com created-by=bicep \
+    --tags environment="$ENV" project=meeting-intelligence owner=caleb.lucas@generationai.co.nz created-by=bicep \
     --output none
 echo ""
 

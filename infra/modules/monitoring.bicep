@@ -11,7 +11,7 @@ param location string
 param tags object
 
 @description('Budget alert email')
-param alertEmail string = 'caleb.lucas@accretiveai.com'
+param alertEmail string = 'caleb.lucas@generationai.co.nz'
 
 // === LOG ANALYTICS WORKSPACE ===
 

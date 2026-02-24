@@ -60,7 +60,7 @@ param appInsightsConnection string = ''
 var tags = {
   environment: environmentName
   project: 'meeting-intelligence'
-  owner: 'caleb.lucas@accretiveai.com'
+  owner: 'caleb.lucas@generationai.co.nz'
   'created-by': 'bicep'
 }
 
