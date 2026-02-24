@@ -1,14 +1,25 @@
 import { useMsal, useIsAuthenticated } from '@azure/msal-react';
+import { InteractionStatus } from '@azure/msal-browser';
 import { Navigate } from 'react-router-dom';
 import { loginRequest } from '../authConfig';
 
 function Login() {
-    const { instance } = useMsal();
+    const { instance, inProgress } = useMsal();
     const isAuthenticated = useIsAuthenticated();
 
     const handleLogin = () => {
-        instance.loginRedirect(loginRequest);
+        if (inProgress === InteractionStatus.None) {
+            instance.loginRedirect(loginRequest);
+        }
     };
+
+    if (inProgress !== InteractionStatus.None) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-brand-50 to-brand-100">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div>
+            </div>
+        );
+    }
 
     if (isAuthenticated) {
         return <Navigate to="/meetings" replace />;
