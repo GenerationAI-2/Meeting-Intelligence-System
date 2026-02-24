@@ -284,27 +284,34 @@ fi
 # =========================================================================
 # PHASE 10: Health check
 # =========================================================================
-echo "--- Phase 10: Health check ---"
-echo "URL: https://${FQDN}/health/ready"
-RETRIES=0
-MAX_RETRIES=12
-HEALTHY=false
-while [ $RETRIES -lt $MAX_RETRIES ]; do
-    if curl -sf "https://${FQDN}/health/ready" > /dev/null 2>&1; then
-        echo "Health: READY"
-        HEALTHY=true
-        break
-    fi
-    RETRIES=$((RETRIES + 1))
-    echo "Waiting... (${RETRIES}/${MAX_RETRIES})"
-    sleep 10
-done
+# SKIP_HEALTH_CHECK=1 can be set by callers (e.g. deploy-new-client.sh) that
+# run their own health check after DB init. On greenfield, the readiness probe
+# fails before schema exists, causing KEDA scale-to-zero and 7+ min timeouts.
+if [ "${SKIP_HEALTH_CHECK:-}" = "1" ]; then
+    echo "--- Phase 10: Health check SKIPPED (caller will run post-DB-init) ---"
+else
+    echo "--- Phase 10: Health check ---"
+    echo "URL: https://${FQDN}/health/ready"
+    RETRIES=0
+    MAX_RETRIES=12
+    HEALTHY=false
+    while [ $RETRIES -lt $MAX_RETRIES ]; do
+        if curl -sf "https://${FQDN}/health/ready" > /dev/null 2>&1; then
+            echo "Health: READY"
+            HEALTHY=true
+            break
+        fi
+        RETRIES=$((RETRIES + 1))
+        echo "Waiting... (${RETRIES}/${MAX_RETRIES})"
+        sleep 10
+    done
 
-if [ "$HEALTHY" = false ]; then
-    echo ""
-    echo "WARNING: Health check did not pass after $((MAX_RETRIES * 10)) seconds"
-    echo "Check container logs:"
-    echo "  az containerapp logs show -n $APP_NAME -g $RESOURCE_GROUP --type system"
+    if [ "$HEALTHY" = false ]; then
+        echo ""
+        echo "WARNING: Health check did not pass after $((MAX_RETRIES * 10)) seconds"
+        echo "Check container logs:"
+        echo "  az containerapp logs show -n $APP_NAME -g $RESOURCE_GROUP --type system"
+    fi
 fi
 echo ""
 
