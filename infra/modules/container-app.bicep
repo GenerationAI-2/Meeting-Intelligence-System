@@ -178,6 +178,24 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
+// === DIAGNOSTIC SETTINGS ===
+// Container Apps only expose AllMetrics via diagnosticSettings.
+// Console/system logs flow via the Environment's appLogsConfiguration above.
+
+resource containerAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'mi-${environmentName}-capp-diag'
+  scope: containerApp
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
+  }
+}
+
 // === OUTPUTS ===
 
 output fqdn string = containerApp.properties.configuration.ingress.fqdn

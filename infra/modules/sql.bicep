@@ -25,6 +25,9 @@ param databaseSkuTier string = 'Basic'
 @description('Database max size in bytes (2GB = 2147483648)')
 param databaseMaxSizeBytes int = 2147483648
 
+@description('Log Analytics workspace resource ID for diagnostic settings')
+param logAnalyticsWorkspaceId string
+
 // === SQL SERVER ===
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
@@ -91,6 +94,40 @@ resource tde 'Microsoft.Sql/servers/databases/transparentDataEncryption@2023-08-
   name: 'current'
   properties: {
     state: 'Enabled'
+  }
+}
+
+// === DIAGNOSTIC SETTINGS ===
+// Route SQL Database logs and metrics to Log Analytics.
+// Categories verified against Basic tier via:
+//   az monitor diagnostic-settings categories list --resource <db-resource-id>
+// Note: SQLInsights, QueryStoreRuntimeStatistics, QueryStoreWaitStatistics require
+// Query Store (not enabled by default on Basic tier) — safe to configure, they
+// produce no data until Query Store is enabled.
+
+resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'mi-${environmentName}-sql-diag'
+  scope: database
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      { category: 'SQLInsights', enabled: true }
+      { category: 'AutomaticTuning', enabled: true }
+      { category: 'QueryStoreRuntimeStatistics', enabled: true }
+      { category: 'QueryStoreWaitStatistics', enabled: true }
+      { category: 'Errors', enabled: true }
+      { category: 'DatabaseWaitStatistics', enabled: true }
+      { category: 'Timeouts', enabled: true }
+      { category: 'Blocks', enabled: true }
+      { category: 'Deadlocks', enabled: true }
+      { category: 'DevOpsOperationsAudit', enabled: true }
+      { category: 'SQLSecurityAuditEvents', enabled: true }
+    ]
+    metrics: [
+      { category: 'Basic', enabled: true }
+      { category: 'InstanceAndAppAdvanced', enabled: true }
+      { category: 'WorkloadManagement', enabled: true }
+    ]
   }
 }
 

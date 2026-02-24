@@ -97,6 +97,7 @@ module sql 'modules/sql.bicep' = {
     tags: tags
     sqlAdminObjectId: sqlAdminObjectId
     sqlAdminDisplayName: sqlAdminDisplayName
+    logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }
 }
 
