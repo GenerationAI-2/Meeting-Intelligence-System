@@ -11,6 +11,7 @@ from .workspace_context import WorkspaceContext, make_legacy_context
 from . import database as _db_module
 from .database import _get_engine, call_with_retry, get_db_for
 from .tools import meetings, actions, decisions, workspaces
+from .audit import audit_data_operation
 from .schemas import (
     MeetingCreate, MeetingUpdate, MeetingId, MeetingSearch, MeetingListFilter,
     ActionCreate, ActionUpdate, ActionId, ActionListFilter,
@@ -100,15 +101,28 @@ def _resolve_ctx(workspace_override: str | None = None) -> WorkspaceContext | di
     return ctx
 
 
-def _mcp_tool_call(func, ctx, **kwargs):
-    """Execute a tool function with retry and cursor management."""
+def _mcp_tool_call(func, ctx, *, _audit=None, **kwargs):
+    """Execute a tool function with retry and cursor management.
+
+    _audit: Optional tuple of (operation, entity_type, id_key) for audit logging.
+            id_key is the key in the result dict that holds the entity ID.
+            Only logs on success (no error in result).
+    """
     if isinstance(ctx, dict) and ctx.get("error"):
         return ctx  # Workspace resolution failed
     if _db_module.engine_registry:
         eng = _db_module.engine_registry.get_engine(ctx.db_name)
     else:
         eng = _get_engine()
-    return call_with_retry(eng, func, ctx, **kwargs)
+    result = call_with_retry(eng, func, ctx, **kwargs)
+
+    # Audit write operations on success
+    if _audit and not (isinstance(result, dict) and result.get("error")):
+        operation, entity_type, id_key = _audit
+        entity_id = result.get(id_key) if isinstance(result, dict) and id_key else None
+        audit_data_operation(ctx, operation, entity_type, entity_id, auth_method="mcp")
+
+    return result
 
 
 def _validation_error_response(e: ValidationError) -> dict:
@@ -187,6 +201,7 @@ def create_meeting(
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
     return _mcp_tool_call(meetings.create_meeting, ctx,
+                          _audit=("create", "meeting", "id"),
                           title=validated.title,
                           meeting_date=validated.meeting_date,
                           attendees=validated.attendees,
@@ -217,6 +232,7 @@ def update_meeting(
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
     return _mcp_tool_call(meetings.update_meeting, ctx,
+                          _audit=("update", "meeting", "id"),
                           meeting_id=meeting_id,
                           title=validated.title,
                           summary=validated.summary,
@@ -232,7 +248,9 @@ def delete_meeting(meeting_id: int, workspace: str = None) -> dict:
     except ValidationError as e:
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
-    return _mcp_tool_call(meetings.delete_meeting, ctx, meeting_id=validated.meeting_id)
+    return _mcp_tool_call(meetings.delete_meeting, ctx,
+                          _audit=("delete", "meeting", None),
+                          meeting_id=validated.meeting_id)
 
 
 # ============================================================================
@@ -285,6 +303,7 @@ def create_action(
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
     return _mcp_tool_call(actions.create_action, ctx,
+                          _audit=("create", "action", "id"),
                           action_text=validated.action_text,
                           owner=validated.owner,
                           due_date=validated.due_date,
@@ -311,6 +330,7 @@ def update_action(
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
     return _mcp_tool_call(actions.update_action, ctx,
+                          _audit=("update", "action", "id"),
                           action_id=action_id,
                           action_text=validated.action_text,
                           owner=validated.owner,
@@ -325,7 +345,9 @@ def complete_action(action_id: int, workspace: str = None) -> dict:
     except ValidationError as e:
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
-    return _mcp_tool_call(actions.complete_action, ctx, action_id=validated.action_id)
+    return _mcp_tool_call(actions.complete_action, ctx,
+                          _audit=("update", "action", "id"),
+                          action_id=validated.action_id)
 
 
 @mcp.tool(description="Park an action (put on hold). Parked actions can be reopened via update_action.", annotations=WRITE)
@@ -335,7 +357,9 @@ def park_action(action_id: int, workspace: str = None) -> dict:
     except ValidationError as e:
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
-    return _mcp_tool_call(actions.park_action, ctx, action_id=validated.action_id)
+    return _mcp_tool_call(actions.park_action, ctx,
+                          _audit=("update", "action", "id"),
+                          action_id=validated.action_id)
 
 
 @mcp.tool(description="Permanently delete an action. Cannot be undone. Confirm with user before calling.", annotations=DESTRUCTIVE)
@@ -345,7 +369,9 @@ def delete_action(action_id: int, workspace: str = None) -> dict:
     except ValidationError as e:
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
-    return _mcp_tool_call(actions.delete_action, ctx, action_id=validated.action_id)
+    return _mcp_tool_call(actions.delete_action, ctx,
+                          _audit=("delete", "action", None),
+                          action_id=validated.action_id)
 
 
 @mcp.tool(description="Search actions by keyword in action text, owner, or notes. Returns matching actions with context snippet. Use this to find specific action items across all meetings.", annotations=READ_ONLY)
@@ -384,6 +410,7 @@ def create_decision(
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
     return _mcp_tool_call(decisions.create_decision, ctx,
+                          _audit=("create", "decision", "id"),
                           meeting_id=validated.meeting_id,
                           decision_text=validated.decision_text,
                           context=validated.context)
@@ -396,7 +423,9 @@ def delete_decision(decision_id: int, workspace: str = None) -> dict:
     except ValidationError as e:
         return _validation_error_response(e)
     ctx = _resolve_ctx(workspace)
-    return _mcp_tool_call(decisions.delete_decision, ctx, decision_id=validated.decision_id)
+    return _mcp_tool_call(decisions.delete_decision, ctx,
+                          _audit=("delete", "decision", None),
+                          decision_id=validated.decision_id)
 
 
 @mcp.tool(description="Get full details of a specific decision including context and creator.", annotations=READ_ONLY)

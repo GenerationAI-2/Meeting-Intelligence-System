@@ -119,12 +119,12 @@ cleanup_firewall() {
         local output
         if output=$(az sql server firewall-rule delete \
             --server "$SQL_SERVER_NAME" -g "$RESOURCE_GROUP" \
-            --name "$FW_RULE_NAME" --yes 2>&1); then
+            --name "$FW_RULE_NAME" 2>&1); then
             echo "Firewall rule '${FW_RULE_NAME}': removed"
         else
             echo "ERROR: Failed to remove firewall rule '${FW_RULE_NAME}'"
             echo "  Output: ${output}"
-            echo "  Manual cleanup: az sql server firewall-rule delete --server $SQL_SERVER_NAME -g $RESOURCE_GROUP --name $FW_RULE_NAME --yes"
+            echo "  Manual cleanup: az sql server firewall-rule delete --server $SQL_SERVER_NAME -g $RESOURCE_GROUP --name $FW_RULE_NAME"
         fi
     fi
 }
@@ -418,6 +418,17 @@ fi
 echo "Granting MI access to general workspace database (${SQL_DATABASE})..."
 if ! run_sql_against_db "$SQL_DATABASE" "$MI_USER_SQL" "MI user on general DB"; then
     DB_INIT_OK=false
+fi
+
+# Grant dbmanager on master so the admin API can create workspace databases at runtime
+echo "Granting MI dbmanager role on master (for workspace creation)..."
+MI_DBMANAGER_SQL="IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '${APP_NAME}')
+    CREATE USER [${APP_NAME}] FROM EXTERNAL PROVIDER;
+ALTER ROLE dbmanager ADD MEMBER [${APP_NAME}];
+PRINT 'dbmanager granted on master';"
+
+if ! run_sql_against_db "master" "$MI_DBMANAGER_SQL" "MI dbmanager on master"; then
+    echo "  WARNING: dbmanager grant failed (workspace creation via admin API will not work)"
 fi
 echo ""
 

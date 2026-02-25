@@ -1,7 +1,8 @@
 """Meeting Intelligence — Audit Logging
 
 Writes to the audit_log table in the control database.
-Called from admin endpoints and (future) tool functions after successful operations.
+Called from admin endpoints, MCP tool handlers, and API endpoints after
+successful write operations (create, update, delete).
 """
 
 import pyodbc
@@ -57,3 +58,24 @@ def log_audit(
     except Exception as e:
         # Audit failure must never break the main operation
         logger.error("Failed to write audit log: %s", e, exc_info=True)
+
+
+def audit_data_operation(
+    ctx: WorkspaceContext,
+    operation: str,
+    entity_type: str,
+    entity_id: int = None,
+    detail: str = None,
+    auth_method: str = "mcp",
+) -> None:
+    """Fire-and-forget audit log for data operations (MCP/API).
+
+    Opens its own control DB cursor so callers don't need to manage one.
+    Silently swallows all errors — audit must never break the request.
+    """
+    try:
+        from .database import get_control_db
+        with get_control_db() as cursor:
+            log_audit(cursor, ctx, operation, entity_type, entity_id, detail, auth_method)
+    except Exception as e:
+        logger.error("audit_data_operation failed: %s", e, exc_info=True)

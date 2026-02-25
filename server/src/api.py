@@ -12,6 +12,7 @@ from .database import _get_engine, call_with_retry, validate_client_token, valid
 from .dependencies import authenticate_and_store, resolve_workspace
 from .workspace_context import WorkspaceContext
 from .tools import meetings, actions, decisions
+from .audit import audit_data_operation
 from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
 from .config import get_settings
 from .logging_config import get_logger
@@ -315,6 +316,7 @@ async def update_action_status_endpoint(
         if result["code"] == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "update", "action", action_id, auth_method="web")
     return result
 
 
@@ -363,6 +365,7 @@ async def delete_meeting_endpoint(
         if result.get("code") == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "delete", "meeting", meeting_id, auth_method="web")
     return result
 
 
@@ -379,6 +382,7 @@ async def delete_action_endpoint(
         if result.get("code") == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "delete", "action", action_id, auth_method="web")
     return result
 
 
@@ -395,6 +399,7 @@ async def delete_decision_endpoint(
         if result.get("code") == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "delete", "decision", decision_id, auth_method="web")
     return result
 
 

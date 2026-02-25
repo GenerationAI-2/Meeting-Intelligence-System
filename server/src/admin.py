@@ -191,9 +191,13 @@ def _run_workspace_schema(db_name: str) -> None:
 
     eng = _db_module.engine_registry.get_engine(db_name)
     with get_db_for(eng) as cursor:
-        for statement in schema_sql.split(";"):
-            statement = statement.strip()
-            if statement and not statement.startswith("--"):
+        for raw_statement in schema_sql.split(";"):
+            # Strip SQL comment lines before checking if the statement is empty.
+            # Without this, a statement block like "-- comment\nCREATE TABLE ..."
+            # would be skipped entirely because it starts with "--".
+            lines = [ln for ln in raw_statement.split("\n") if not ln.strip().startswith("--")]
+            statement = "\n".join(lines).strip()
+            if statement:
                 try:
                     cursor.execute(statement)
                 except pyodbc.ProgrammingError as e:
