@@ -87,9 +87,6 @@ async def get_current_user(request: Request):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Whitelist Check
-    allowed_users = settings.get_allowed_users_list()
-
     if not user_email:
         logger.warning("Auth failed: no email in token payload")
         raise HTTPException(
@@ -97,11 +94,16 @@ async def get_current_user(request: Request):
             detail="Token missing email/upn claim"
         )
 
-    if user_email.lower() not in allowed_users:
-         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Access denied for user: {user_email}"
-        )
+    # Whitelist Check — only in legacy mode (no control DB).
+    # In workspace mode, access is controlled by control DB memberships
+    # (resolve_workspace raises 403 if user has no workspace memberships).
+    if not settings.control_db_name or not _db_module.engine_registry:
+        allowed_users = settings.get_allowed_users_list()
+        if user_email.lower() not in allowed_users:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied for user: {user_email}"
+            )
 
     return user_email
 
