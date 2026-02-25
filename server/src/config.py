@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     # Azure SQL Database
     azure_sql_server: str = ""
     azure_sql_database: str = "meeting-intelligence"
+    control_db_name: str = ""  # e.g., 'acme-mi-control'. Empty = workspace features disabled.
     # Authenticated via Azure Entra ID (CLI or Managed Identity), so no password needed
     # Rename env vars to avoid conflict with DefaultAzureCredential
     azure_tenant_id: str = Field(default="", validation_alias="API_AZURE_TENANT_ID")

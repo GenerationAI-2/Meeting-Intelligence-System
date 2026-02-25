@@ -9,6 +9,7 @@ Pool configuration:
 - pool_pre_ping=True → detects stale connections after SQL auto-pause
 - pool_recycle=1800 → recycle before Azure's 30-min idle kill
 """
+from __future__ import annotations
 
 import hashlib
 import json
@@ -16,14 +17,17 @@ import secrets
 import struct
 import time
 import logging
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import Generator, Any
+from typing import Generator, Any, Optional
 
 import pyodbc
+pyodbc.pooling = False  # CRITICAL: disable pyodbc's hidden pool — conflicts with SQLAlchemy's pool
+
 from azure.identity import DefaultAzureCredential
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Engine
 from sqlalchemy.pool import QueuePool
 
 from .config import get_settings
@@ -157,19 +161,132 @@ def retry_on_transient(max_retries: int = MAX_RETRIES, base_delay: float = BASE_
     return decorator
 
 
-def get_connection() -> pyodbc.Connection:
-    """Create a new database connection using Entra ID token."""
-    return _create_raw_connection()
+def call_with_retry(engine: Engine, func, *args,
+                    max_retries: int = MAX_RETRIES,
+                    base_delay: float = BASE_DELAY,
+                    max_delay: float = MAX_DELAY, **kwargs):
+    """Call func(cursor, *args, **kwargs) with a fresh cursor on each retry.
+
+    Used by MCP handlers and API endpoints to wrap tool function calls.
+    The cursor is acquired from the engine's pool and passed as the first arg.
+    On transient errors, a new cursor is obtained and the call is retried.
+    Non-transient errors (including HTTPException from permission checks)
+    propagate immediately.
+    """
+    last_exception = None
+    for attempt in range(max_retries + 1):
+        try:
+            with get_db_for(engine) as cursor:
+                return func(cursor, *args, **kwargs)
+        except Exception as e:
+            if not is_transient_error(e):
+                raise
+            last_exception = e
+            if attempt == max_retries:
+                logger.error(
+                    "Tool call failed after %d attempts: %s",
+                    attempt + 1, e, exc_info=True
+                )
+                return {
+                    "error": True,
+                    "code": "DATABASE_UNAVAILABLE",
+                    "message": "Database temporarily unavailable. Please try again in a moment."
+                }
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            logger.warning(
+                "Transient error (attempt %d/%d): %s. Retrying in %.1fs",
+                attempt + 1, max_retries + 1, e, delay
+            )
+            time.sleep(delay)
+    raise last_exception  # Safety net
+
+
+# ============================================================================
+# ENGINE REGISTRY — Multi-database connection management
+# ============================================================================
+
+class EngineRegistry:
+    """Thread-safe lazy engine cache. One engine per database on the same SQL Server."""
+
+    def __init__(self, sql_server: str, pool_size: int = 3, max_overflow: int = 1):
+        self._engines: dict[str, Engine] = {}
+        self._lock = threading.Lock()
+        self._sql_server = sql_server
+        self._pool_size = pool_size
+        self._max_overflow = max_overflow
+
+    def get_engine(self, database_name: str) -> Engine:
+        """Get or create an engine for the given database. Thread-safe, lazy."""
+        if database_name in self._engines:
+            return self._engines[database_name]
+        with self._lock:
+            if database_name not in self._engines:
+                self._engines[database_name] = self._create_engine(database_name)
+            return self._engines[database_name]
+
+    def _create_engine(self, database_name: str) -> Engine:
+        """Create a new SQLAlchemy engine for a specific database."""
+        sql_server = self._sql_server
+
+        def _connection_factory():
+            credential = DefaultAzureCredential()
+            token_bytes = credential.get_token(
+                "https://database.windows.net/.default"
+            ).token.encode("UTF-16-LE")
+            token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
+
+            conn_str = (
+                f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+                f"SERVER={sql_server};"
+                f"DATABASE={database_name};"
+                f"Encrypt=yes;TrustServerCertificate=no;"
+            )
+
+            SQL_COPT_SS_ACCESS_TOKEN = 1256
+            return pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+
+        engine = create_engine(
+            "mssql+pyodbc://",
+            creator=_connection_factory,
+            poolclass=QueuePool,
+            pool_size=self._pool_size,
+            max_overflow=self._max_overflow,
+            pool_timeout=30,
+            pool_recycle=1800,
+            pool_pre_ping=True,
+            pool_use_lifo=True,
+        )
+        logger.info(
+            "Engine created for database '%s'",
+            database_name,
+            extra={
+                "database": database_name,
+                "pool_size": self._pool_size,
+                "max_overflow": self._max_overflow,
+            }
+        )
+        return engine
+
+    def dispose_all(self) -> None:
+        """Dispose all engines. Called on app shutdown."""
+        with self._lock:
+            for db_name, engine in self._engines.items():
+                logger.info("Disposing engine for database '%s'", db_name)
+                engine.dispose()
+            self._engines.clear()
+
+    @property
+    def engine_count(self) -> int:
+        return len(self._engines)
+
+
+# Module-level singleton, initialised in main.py during app startup
+engine_registry: Optional[EngineRegistry] = None
 
 
 @contextmanager
-def get_db() -> Generator[pyodbc.Cursor, None, None]:
-    """Context manager for database operations with auto-commit.
-
-    Uses SQLAlchemy connection pool for efficient connection reuse.
-    pool_pre_ping detects stale connections (e.g., after SQL auto-pause).
-    """
-    engine = _get_engine()
+def get_db_for(engine: Engine) -> Generator[pyodbc.Cursor, None, None]:
+    """Yield a pyodbc cursor from a specific engine. Same pattern as get_db()."""
     conn = engine.raw_connection()
     cursor = conn.cursor()
     try:
@@ -180,7 +297,53 @@ def get_db() -> Generator[pyodbc.Cursor, None, None]:
         raise
     finally:
         cursor.close()
-        conn.close()  # Returns connection to pool (not a real close)
+        conn.close()
+
+
+@contextmanager
+def get_control_db() -> Generator[pyodbc.Cursor, None, None]:
+    """Shortcut: cursor for the control database."""
+    settings = get_settings()
+    if not engine_registry:
+        raise RuntimeError("Engine registry not initialised — cannot access control database")
+    if not settings.control_db_name:
+        raise RuntimeError("CONTROL_DB_NAME not configured")
+    eng = engine_registry.get_engine(settings.control_db_name)
+    with get_db_for(eng) as cursor:
+        yield cursor
+
+
+def get_connection() -> pyodbc.Connection:
+    """Create a new database connection using Entra ID token."""
+    return _create_raw_connection()
+
+
+@contextmanager
+def get_db() -> Generator[pyodbc.Cursor, None, None]:
+    """Context manager for database operations with auto-commit.
+
+    Uses engine_registry when available (multi-database mode), falls back to
+    legacy _get_engine() for backward compatibility (tests, stdio mode).
+    """
+    if engine_registry is not None:
+        settings = get_settings()
+        eng = engine_registry.get_engine(settings.azure_sql_database)
+        with get_db_for(eng) as cursor:
+            yield cursor
+    else:
+        # Legacy path — single global engine
+        engine = _get_engine()
+        conn = engine.raw_connection()
+        cursor = conn.cursor()
+        try:
+            yield cursor
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()  # Returns connection to pool (not a real close)
 
 
 def test_connection() -> bool:
@@ -205,13 +368,17 @@ def rows_to_list(cursor: pyodbc.Cursor, rows: list) -> list[dict]:
 
 
 # ============================================================================
-# CLIENT TOKEN MANAGEMENT
+# CLIENT TOKEN MANAGEMENT (DEPRECATED — use validate_token_from_control_db)
+# These functions query the per-workspace ClientToken table.
+# Kept for backward compatibility with deployments that have not yet migrated
+# tokens to the control database. Will be removed in W4.
 # ============================================================================
 
 @retry_on_transient()
 def validate_client_token(token_hash: str) -> dict | None:
-    """Validate an MCP auth token against the database.
+    """Validate an MCP auth token against the workspace database.
 
+    DEPRECATED: Use validate_token_from_control_db() when control_db_name is configured.
     Returns dict with {client_name, client_email} if valid, None if invalid/expired/revoked.
     Updates LastUsedAt on successful validation.
     """
@@ -241,8 +408,9 @@ def create_client_token(
     expires_days: int | None = None,
     notes: str | None = None,
 ) -> dict:
-    """Generate a new client token and store its hash.
+    """Generate a new client token and store its hash in workspace DB.
 
+    DEPRECATED: New tokens should be created in the control database via manage_tokens.py.
     Returns dict with {token (plaintext — show ONCE), token_hash, client_name, expires_at}.
     """
     plaintext_token = secrets.token_urlsafe(32)
@@ -278,7 +446,10 @@ def insert_token_hash(
     created_by: str,
     notes: str | None = None,
 ) -> bool:
-    """Insert a pre-computed token hash (used for migration from env var)."""
+    """Insert a pre-computed token hash (used for migration from env var).
+
+    DEPRECATED: Use control database tokens table via manage_tokens.py.
+    """
     with get_db() as cursor:
         cursor.execute(
             """
@@ -292,7 +463,10 @@ def insert_token_hash(
 
 @retry_on_transient()
 def revoke_client_token(token_id: int) -> bool:
-    """Revoke a token by setting IsActive = 0."""
+    """Revoke a token by setting IsActive = 0.
+
+    DEPRECATED: Use control database tokens table via manage_tokens.py.
+    """
     with get_db() as cursor:
         cursor.execute(
             "UPDATE ClientToken SET IsActive = 0 WHERE TokenId = ?",
@@ -303,7 +477,10 @@ def revoke_client_token(token_id: int) -> bool:
 
 @retry_on_transient()
 def list_client_tokens() -> list[dict]:
-    """List all tokens with metadata (NOT the hash — for admin display only)."""
+    """List all tokens with metadata (NOT the hash — for admin display only).
+
+    DEPRECATED: Use control database tokens table via manage_tokens.py or admin API.
+    """
     with get_db() as cursor:
         cursor.execute(
             """
@@ -314,6 +491,100 @@ def list_client_tokens() -> list[dict]:
             """
         )
         return rows_to_list(cursor, cursor.fetchall())
+
+
+# ============================================================================
+# CONTROL DB TOKEN VALIDATION
+# ============================================================================
+
+def validate_token_from_control_db(token_hash: str) -> dict | None:
+    """Validate a token against the control database tokens table.
+
+    Returns dict with full user + membership info if valid, None if invalid/expired
+    or if the control database is not configured.
+
+    Return shape:
+    {
+        "user_email": str,
+        "is_org_admin": bool,
+        "default_workspace_id": int | None,
+        "memberships": [
+            {
+                "workspace_id": int,
+                "workspace_name": str,
+                "workspace_display_name": str,
+                "db_name": str,
+                "role": str,
+                "is_default": bool,
+                "is_archived": bool,
+            },
+            ...
+        ]
+    }
+    """
+    settings = get_settings()
+    if not engine_registry or not settings.control_db_name:
+        return None
+
+    try:
+        eng = engine_registry.get_engine(settings.control_db_name)
+        with get_db_for(eng) as cursor:
+            # Validate token and get user info in one query
+            cursor.execute(
+                """
+                SELECT u.id, u.email, u.is_org_admin, u.default_workspace_id
+                FROM tokens t
+                JOIN users u ON u.id = t.user_id
+                WHERE t.token_hash = ?
+                  AND t.is_active = 1
+                  AND (t.expires_at IS NULL OR t.expires_at > SYSUTCDATETIME())
+                """,
+                (token_hash,),
+            )
+            token_row = cursor.fetchone()
+            if not token_row:
+                return None
+
+            user_id = token_row[0]
+            user_email = token_row[1]
+            is_org_admin = bool(token_row[2])
+            default_workspace_id = token_row[3]
+
+            # Get workspace memberships
+            cursor.execute(
+                """
+                SELECT w.id, w.name, w.display_name, w.db_name, wm.role,
+                       w.is_default, w.is_archived
+                FROM workspace_members wm
+                JOIN workspaces w ON w.id = wm.workspace_id
+                WHERE wm.user_id = ?
+                ORDER BY w.is_default DESC, w.name
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+            memberships = [
+                {
+                    "workspace_id": row[0],
+                    "workspace_name": row[1],
+                    "workspace_display_name": row[2],
+                    "db_name": row[3],
+                    "role": row[4],
+                    "is_default": bool(row[5]),
+                    "is_archived": bool(row[6]),
+                }
+                for row in rows
+            ]
+
+            return {
+                "user_email": user_email,
+                "is_org_admin": is_org_admin,
+                "default_workspace_id": default_workspace_id,
+                "memberships": memberships,
+            }
+    except Exception as e:
+        logger.warning("Control DB token validation failed: %s", e)
+        return None
 
 
 # ============================================================================

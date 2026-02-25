@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { decisionsApi } from '../services/api';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function DecisionDetail() {
     const { id } = useParams();
+    const navigate = useNavigate();
+    const { permissions } = useWorkspace();
     const [decision, setDecision] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -97,6 +100,26 @@ function DecisionDetail() {
                         <dd className="text-gray-900">{formatDate(decision.created_at)}</dd>
                     </div>
                 </dl>
+
+                {/* Delete — chairs and org admins only */}
+                {permissions.is_chair_or_admin && (
+                    <div className="border-t pt-4 mt-4">
+                        <button
+                            onClick={async () => {
+                                if (!confirm('Delete this decision? This cannot be undone.')) return;
+                                try {
+                                    await decisionsApi.delete(id);
+                                    navigate('/decisions');
+                                } catch (err) {
+                                    console.error('Delete failed:', err);
+                                }
+                            }}
+                            className="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100"
+                        >
+                            Delete Decision
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

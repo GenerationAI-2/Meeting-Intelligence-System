@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { actionsApi } from '../services/api';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function ActionsList() {
+    const { permissions } = useWorkspace();
     const [actions, setActions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -190,24 +192,35 @@ function ActionsList() {
                                         {formatDate(action.due_date)}
                                     </td>
                                     <td className="table-cell">
-                                        <select
-                                            value={action.status}
-                                            onChange={(e) => {
-                                                e.stopPropagation();
-                                                handleStatusChange(action.id, e.target.value);
-                                            }}
-                                            onClick={(e) => e.stopPropagation()}
-                                            className={`rounded px-2 py-1 text-sm border-0 cursor-pointer ${action.status === 'Complete'
+                                        {permissions.can_write ? (
+                                            <select
+                                                value={action.status}
+                                                onChange={(e) => {
+                                                    e.stopPropagation();
+                                                    handleStatusChange(action.id, e.target.value);
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                                className={`rounded px-2 py-1 text-sm border-0 cursor-pointer ${action.status === 'Complete'
+                                                        ? 'bg-green-100 text-green-800'
+                                                        : action.status === 'Parked'
+                                                            ? 'bg-yellow-100 text-yellow-800'
+                                                            : 'bg-blue-100 text-blue-800'
+                                                    }`}
+                                            >
+                                                <option value="Open">Open</option>
+                                                <option value="Complete">Complete</option>
+                                                <option value="Parked">Parked</option>
+                                            </select>
+                                        ) : (
+                                            <span className={`rounded px-2 py-1 text-sm ${action.status === 'Complete'
                                                     ? 'bg-green-100 text-green-800'
                                                     : action.status === 'Parked'
                                                         ? 'bg-yellow-100 text-yellow-800'
                                                         : 'bg-blue-100 text-blue-800'
-                                                }`}
-                                        >
-                                            <option value="Open">Open</option>
-                                            <option value="Complete">Complete</option>
-                                            <option value="Parked">Parked</option>
-                                        </select>
+                                                }`}>
+                                                {action.status}
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="table-cell">
                                         {action.meeting_id ? (

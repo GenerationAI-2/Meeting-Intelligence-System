@@ -9,8 +9,10 @@ import ActionsList from './pages/ActionsList';
 import ActionDetail from './pages/ActionDetail';
 import DecisionsList from './pages/DecisionsList';
 import DecisionDetail from './pages/DecisionDetail';
+import WorkspaceAdmin from './pages/WorkspaceAdmin';
 import Login from './pages/Login';
 import { setAccessTokenProvider } from './services/api';
+import { WorkspaceProvider } from './contexts/WorkspaceContext';
 
 // Component to handle token acquisition and injection into API service
 function AuthenticationHandler({ children }) {
@@ -74,17 +76,20 @@ function App() {
                     path="/*"
                     element={
                         <ProtectedRoute>
-                            <Layout>
-                                <Routes>
-                                    <Route path="/" element={<Navigate to="/meetings" replace />} />
-                                    <Route path="/meetings" element={<MeetingsList />} />
-                                    <Route path="/meetings/:id" element={<MeetingDetail />} />
-                                    <Route path="/actions" element={<ActionsList />} />
-                                    <Route path="/actions/:id" element={<ActionDetail />} />
-                                    <Route path="/decisions" element={<DecisionsList />} />
-                                    <Route path="/decisions/:id" element={<DecisionDetail />} />
-                                </Routes>
-                            </Layout>
+                            <WorkspaceProvider>
+                                <Layout>
+                                    <Routes>
+                                        <Route path="/" element={<Navigate to="/meetings" replace />} />
+                                        <Route path="/meetings" element={<MeetingsList />} />
+                                        <Route path="/meetings/:id" element={<MeetingDetail />} />
+                                        <Route path="/actions" element={<ActionsList />} />
+                                        <Route path="/actions/:id" element={<ActionDetail />} />
+                                        <Route path="/decisions" element={<DecisionsList />} />
+                                        <Route path="/decisions/:id" element={<DecisionDetail />} />
+                                        <Route path="/admin/workspaces" element={<WorkspaceAdmin />} />
+                                    </Routes>
+                                </Layout>
+                            </WorkspaceProvider>
                         </ProtectedRoute>
                     }
                 />

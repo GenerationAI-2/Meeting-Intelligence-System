@@ -57,6 +57,9 @@ RUN uv sync --frozen --no-dev --no-editable
 ARG CACHEBUST=1
 COPY server/src/ src/
 
+# Copy workspace schema (used by admin API to provision new workspace databases)
+COPY schema.sql schema.sql
+
 # Copy built frontend from Stage 1
 COPY --from=builder /app/dist/ static/
 

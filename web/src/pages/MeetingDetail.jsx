@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { meetingsApi } from '../services/api';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function MeetingDetail() {
     const { id } = useParams();
+    const navigate = useNavigate();
+    const { permissions } = useWorkspace();
     const [meeting, setMeeting] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -174,6 +177,26 @@ function MeetingDetail() {
                             </li>
                         ))}
                     </ul>
+                </div>
+            )}
+
+            {/* Delete — chairs and org admins only */}
+            {permissions.is_chair_or_admin && (
+                <div className="card">
+                    <button
+                        onClick={async () => {
+                            if (!confirm('Delete this meeting and all linked actions and decisions? This cannot be undone.')) return;
+                            try {
+                                await meetingsApi.delete(id);
+                                navigate('/meetings');
+                            } catch (err) {
+                                console.error('Delete failed:', err);
+                            }
+                        }}
+                        className="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100"
+                    >
+                        Delete Meeting
+                    </button>
                 </div>
             )}
         </div>

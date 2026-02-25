@@ -1,16 +1,23 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useMsal, useAccount } from '@azure/msal-react';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function Layout({ children }) {
     const { instance, accounts } = useMsal();
     const account = useAccount(accounts[0] || {});
     const location = useLocation();
+    const { permissions, isOrgAdmin } = useWorkspace();
 
     const navItems = [
         { path: '/meetings', label: 'Meetings' },
         { path: '/actions', label: 'Actions' },
         { path: '/decisions', label: 'Decisions' },
     ];
+
+    if (permissions.is_chair_or_admin || isOrgAdmin) {
+        navItems.push({ path: '/admin/workspaces', label: 'Admin' });
+    }
 
     const handleLogout = () => {
         instance.logoutRedirect();
@@ -43,8 +50,9 @@ function Layout({ children }) {
                             </div>
                         </div>
 
-                        {/* User Menu */}
+                        {/* Workspace + User Menu */}
                         <div className="flex items-center space-x-4">
+                            <WorkspaceSwitcher />
                             <span className="text-sm text-gray-700">
                                 {account?.name || account?.username || 'User'}
                             </span>
