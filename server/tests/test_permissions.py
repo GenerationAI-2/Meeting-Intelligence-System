@@ -159,16 +159,35 @@ class TestOrgAdminPermissions:
         ctx = _make_ctx(role="viewer", is_org_admin=True)
         check_permission(ctx, "read")
 
-    def test_org_admin_can_create(self):
+    def test_org_admin_viewer_cannot_create(self):
+        """Org admin with viewer role uses viewer-level data access (H2 fix)."""
         ctx = _make_ctx(role="viewer", is_org_admin=True)
+        with pytest.raises(HTTPException) as exc_info:
+            check_permission(ctx, "create")
+        assert exc_info.value.status_code == 403
+
+    def test_org_admin_chair_can_create(self):
+        """Org admin with chair role can create through their role."""
+        ctx = _make_ctx(role="chair", is_org_admin=True)
         check_permission(ctx, "create")
 
-    def test_org_admin_can_update_others(self):
+    def test_org_admin_viewer_cannot_update_others(self):
+        """Org admin with viewer role cannot update (H2 fix)."""
         ctx = _make_ctx(role="viewer", is_org_admin=True)
-        check_permission(ctx, "update", {"created_by": "other@example.com"})
+        with pytest.raises(HTTPException) as exc_info:
+            check_permission(ctx, "update", {"created_by": "other@example.com"})
+        assert exc_info.value.status_code == 403
 
-    def test_org_admin_can_delete(self):
+    def test_org_admin_viewer_cannot_delete(self):
+        """Org admin with viewer role cannot delete (H2 fix)."""
         ctx = _make_ctx(role="viewer", is_org_admin=True)
+        with pytest.raises(HTTPException) as exc_info:
+            check_permission(ctx, "delete")
+        assert exc_info.value.status_code == 403
+
+    def test_org_admin_chair_can_delete(self):
+        """Org admin with chair role can delete through their role."""
+        ctx = _make_ctx(role="chair", is_org_admin=True)
         check_permission(ctx, "delete")
 
     def test_org_admin_can_manage_members(self):
@@ -207,12 +226,18 @@ class TestArchivedWorkspace:
             check_permission(ctx, "delete")
         assert exc_info.value.status_code == 403
 
-    def test_archived_org_admin_bypasses(self):
-        """Org admin can write even in archived workspace."""
+    def test_archived_org_admin_data_blocked(self):
+        """Org admin cannot write data in archived workspace (H2 fix — role-based data access)."""
         ctx = _make_ctx(role="chair", is_org_admin=True, is_archived=True)
-        check_permission(ctx, "create")
-        check_permission(ctx, "update")
-        check_permission(ctx, "delete")
+        with pytest.raises(HTTPException) as exc_info:
+            check_permission(ctx, "create")
+        assert exc_info.value.status_code == 403
+        assert "archived" in str(exc_info.value.detail).lower()
+
+    def test_archived_org_admin_can_manage_workspace(self):
+        """Org admin can still manage workspace (archive/unarchive) even when archived."""
+        ctx = _make_ctx(role="chair", is_org_admin=True, is_archived=True)
+        check_permission(ctx, "manage_workspace")
 
 
 # --- WorkspaceContext Helper Method Tests ---
@@ -232,8 +257,9 @@ class TestWorkspaceContextHelpers:
         assert ctx.can_write() is False
 
     def test_can_write_org_admin_archived(self):
+        """Org admin in archived workspace cannot write data (H2 fix — role-based)."""
         ctx = _make_ctx(role="viewer", is_org_admin=True, is_archived=True)
-        assert ctx.can_write() is True
+        assert ctx.can_write() is False
 
     def test_is_chair_or_admin_chair(self):
         ctx = _make_ctx(role="chair")
@@ -243,8 +269,14 @@ class TestWorkspaceContextHelpers:
         ctx = _make_ctx(role="member")
         assert ctx.is_chair_or_admin() is False
 
-    def test_is_chair_or_admin_org_admin(self):
+    def test_is_chair_or_admin_org_admin_viewer(self):
+        """Org admin with viewer role is not chair-or-admin for data ops (H2 fix)."""
         ctx = _make_ctx(role="viewer", is_org_admin=True)
+        assert ctx.is_chair_or_admin() is False
+
+    def test_is_chair_or_admin_org_admin_chair(self):
+        """Org admin with chair role is chair-or-admin through their role."""
+        ctx = _make_ctx(role="chair", is_org_admin=True)
         assert ctx.is_chair_or_admin() is True
 
     def test_role_shortcut(self):

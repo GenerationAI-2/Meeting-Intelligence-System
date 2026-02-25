@@ -80,9 +80,16 @@ def _resolve_ctx(workspace_override: str | None = None) -> WorkspaceContext | di
 
     Returns WorkspaceContext on success, or error dict on failure.
     """
+    from .config import get_settings
     ctx = get_mcp_workspace_context()
     if ctx is None:
-        # Fallback for legacy/stdio mode
+        settings = get_settings()
+        if settings.control_db_name:
+            # Workspace mode: context should have been set by auth middleware.
+            # If it wasn't, fail closed — do NOT grant admin access.
+            return {"error": True, "code": "AUTH_ERROR",
+                    "message": "Workspace context not resolved — access denied"}
+        # Genuine legacy/stdio mode: no control DB configured
         ctx = make_legacy_context(get_mcp_user())
 
     if workspace_override:

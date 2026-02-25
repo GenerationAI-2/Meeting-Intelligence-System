@@ -18,11 +18,10 @@ def check_permission(ctx: WorkspaceContext, operation: str, entity: dict = None)
     Raises HTTPException 403 if denied. Returns None if allowed.
     """
 
-    # Org admin bypasses RBAC checks within a workspace they have access to.
-    # Note: org admin does NOT get implicit data access to all workspaces.
-    # They must be explicitly added as a member to access a workspace's data.
-    # org_admin only governs admin API operations (workspace CRUD, member management).
-    if ctx.is_org_admin:
+    # Org admin bypasses RBAC for workspace management operations only.
+    # For data operations (read/create/update/delete), org admin uses their
+    # membership role — they don't get implicit elevated data access.
+    if ctx.is_org_admin and operation in ('manage_workspace', 'manage_members'):
         return
 
     role = ctx.role  # viewer | member | chair

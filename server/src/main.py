@@ -84,21 +84,23 @@ def run_http():
                         active=active,
                     )
                 else:
-                    ctx = make_legacy_context(email)
+                    logger.warning("MCP user %s has no workspace memberships — denying access", email)
+                    ctx = None  # Will cause _resolve_ctx to return error
             except Exception as e:
-                logger.warning("Failed to resolve workspace for MCP user %s: %s", email, e)
-                ctx = make_legacy_context(email)
+                logger.error("Failed to resolve workspace for MCP user %s — failing closed: %s", email, e)
+                ctx = None  # Fail closed — do not grant admin on transient errors
         else:
             ctx = make_legacy_context(email)
 
-        # Cache the result
-        _workspace_cache[email] = {"ctx": ctx, "expires": _time.time() + TOKEN_CACHE_TTL}
-        # Enforce max size
-        if len(_workspace_cache) > TOKEN_CACHE_MAX_SIZE:
-            oldest_key = min(_workspace_cache, key=lambda k: _workspace_cache[k]["expires"])
-            del _workspace_cache[oldest_key]
-
-        set_mcp_workspace_context(ctx)
+        # Cache and set context (only if successfully resolved)
+        if ctx is not None:
+            _workspace_cache[email] = {"ctx": ctx, "expires": _time.time() + TOKEN_CACHE_TTL}
+            # Enforce max size
+            if len(_workspace_cache) > TOKEN_CACHE_MAX_SIZE:
+                oldest_key = min(_workspace_cache, key=lambda k: _workspace_cache[k]["expires"])
+                del _workspace_cache[oldest_key]
+            set_mcp_workspace_context(ctx)
+        # else: ctx stays None — _resolve_ctx will return error dict in workspace mode
 
     async def validate_mcp_token(token: str) -> str | None:
         """Validate MCP token. Returns client email if valid, None if not.
@@ -124,7 +126,13 @@ def run_http():
         # Cache miss — try control DB first when configured
         email = None
         if settings.control_db_name and _db_module.engine_registry:
-            result = validate_token_from_control_db(token_hash)
+            try:
+                result = validate_token_from_control_db(token_hash)
+            except Exception as e:
+                # Control DB unreachable — fail closed (deny access).
+                # Do NOT fall through to legacy validation.
+                logger.error("Token validation failed — control DB error: %s", e)
+                return None
             if result and result.get("user_email"):
                 email = result["user_email"]
                 # Build and cache WorkspaceContext from token result
@@ -153,15 +161,19 @@ def run_http():
                         active=active,
                     )
                 else:
-                    ctx = make_legacy_context(email)
+                    logger.warning("Token user %s has no workspace memberships — denying access", email)
+                    ctx = None  # Fail closed — no admin escalation
                 # Pre-cache workspace context (avoids second control DB query)
-                _workspace_cache[email] = {
-                    "ctx": ctx,
-                    "expires": _time.time() + TOKEN_CACHE_TTL,
-                }
+                if ctx is not None:
+                    _workspace_cache[email] = {
+                        "ctx": ctx,
+                        "expires": _time.time() + TOKEN_CACHE_TTL,
+                    }
 
         # Fallback: legacy workspace DB ClientToken table
-        if not email:
+        # Only use legacy validation when control DB is NOT configured.
+        # When control DB is active, all tokens must be in the control DB.
+        if not email and not (settings.control_db_name and _db_module.engine_registry):
             result = validate_client_token(token_hash)
             if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
                 email = result["client_email"]

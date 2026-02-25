@@ -140,9 +140,9 @@ async def resolve_workspace(
         with get_control_db() as cursor:
             is_org_admin, default_ws_id, memberships = _get_user_memberships(cursor, user_email)
     except Exception as e:
-        logger.warning("resolve_workspace: FALLBACK TO LEGACY — control DB error: %s: %s",
-                       type(e).__name__, e)
-        return make_legacy_context(user_email)
+        logger.error("resolve_workspace: control DB unavailable — failing closed: %s: %s",
+                     type(e).__name__, e)
+        raise HTTPException(503, "Service temporarily unavailable — please retry")
 
     if not memberships:
         raise HTTPException(403, "User has no workspace memberships")

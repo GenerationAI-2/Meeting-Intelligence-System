@@ -143,8 +143,21 @@ class TestWorkspaceContextFromToken:
         assert ctx.can_write() is False
         assert ctx.is_chair_or_admin() is False
 
-    def test_context_org_admin_flag_grants_admin(self):
+    def test_context_org_admin_viewer_uses_role_for_data(self):
+        """Org admin with viewer role uses viewer-level data access (H2 fix)."""
         ws = _ws(1, "board", role="viewer")
+        ctx = WorkspaceContext(
+            user_email="admin@example.com",
+            is_org_admin=True,
+            memberships=[ws],
+            active=ws,
+        )
+        assert ctx.is_chair_or_admin() is False
+        assert ctx.can_write() is False
+
+    def test_context_org_admin_chair_has_full_access(self):
+        """Org admin with chair role has full data access through their role."""
+        ws = _ws(1, "board", role="chair")
         ctx = WorkspaceContext(
             user_email="admin@example.com",
             is_org_admin=True,
@@ -165,7 +178,8 @@ class TestWorkspaceContextFromToken:
         assert ctx.can_write() is False
         assert ctx.is_chair_or_admin() is True
 
-    def test_context_org_admin_can_write_archived(self):
+    def test_context_org_admin_cannot_write_archived(self):
+        """Org admin cannot write data in archived workspace (H2 fix — role-based)."""
         ws = _ws(1, "board", role="viewer", is_archived=True)
         ctx = WorkspaceContext(
             user_email="admin@example.com",
@@ -173,4 +187,4 @@ class TestWorkspaceContextFromToken:
             memberships=[ws],
             active=ws,
         )
-        assert ctx.can_write() is True
+        assert ctx.can_write() is False

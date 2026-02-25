@@ -379,7 +379,7 @@ try:
     conn = pyodbc.connect(conn_str, attrs_before={1256: token_struct})
     cursor = conn.cursor()
     sql = open('${sql_file}').read()
-    for batch in re.split(r'^\s*GO\s*\$', sql, flags=re.MULTILINE | re.IGNORECASE):
+    for batch in re.split(r'^\s*GO\s*$', sql, flags=re.MULTILINE | re.IGNORECASE):
         batch = batch.strip()
         if batch:
             cursor.execute(batch)

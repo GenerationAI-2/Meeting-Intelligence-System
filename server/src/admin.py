@@ -27,6 +27,14 @@ logger = get_logger(__name__)
 admin_router = APIRouter(tags=["admin"])
 
 
+async def _require_workspace_mode():
+    """Dependency that blocks admin API in legacy mode (no control DB)."""
+    settings = get_settings()
+    if not settings.control_db_name:
+        raise HTTPException(404, "Admin API not available — workspace mode not configured")
+
+
+
 # ==========================================================================
 # Pydantic Request Models
 # ==========================================================================
@@ -172,6 +180,26 @@ def _create_workspace_database(sql_server: str, db_name: str) -> None:
         conn.close()
 
 
+def _drop_workspace_database(sql_server: str, db_name: str) -> None:
+    """Drop a workspace database. Used as compensating action on failed creation."""
+    token_struct = _get_azure_token_struct()
+    conn_str = (
+        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+        f"SERVER={sql_server};"
+        f"DATABASE=master;"
+        f"Encrypt=yes;TrustServerCertificate=no;"
+    )
+    SQL_COPT_SS_ACCESS_TOKEN = 1256
+    conn = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+    conn.autocommit = True
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"DROP DATABASE [{db_name}]")
+        logger.info("Dropped orphaned database '%s'", db_name)
+    finally:
+        conn.close()
+
+
 def _run_workspace_schema(db_name: str) -> None:
     """Run the workspace schema SQL against a newly created database.
 
@@ -255,7 +283,7 @@ def _grant_mi_access(sql_server: str, db_name: str) -> None:
 # Workspace CRUD (Org Admin only)
 # ==========================================================================
 
-@admin_router.post("/workspaces")
+@admin_router.post("/workspaces", dependencies=[Depends(_require_workspace_mode)])
 async def create_workspace(
     body: WorkspaceCreate,
     user: str = Depends(authenticate_and_store),
@@ -299,37 +327,48 @@ async def create_workspace(
         )
 
     # 5. Register in control DB
-    with get_control_db() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO workspaces (name, display_name, db_name, created_by)
-            OUTPUT inserted.id, inserted.name, inserted.display_name,
-                   inserted.db_name, inserted.is_default, inserted.is_archived,
-                   inserted.created_at
-            VALUES (?, ?, ?, ?)
-            """,
-            (body.name, body.display_name, db_name, ctx.user_email),
-        )
-        row = cursor.fetchone()
-        result = {
-            "id": row[0],
-            "name": row[1],
-            "display_name": row[2],
-            "db_name": row[3],
-            "is_default": bool(row[4]),
-            "is_archived": bool(row[5]),
-            "created_at": row[6].isoformat() if row[6] else None,
-        }
+    try:
+        with get_control_db() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO workspaces (name, display_name, db_name, created_by)
+                OUTPUT inserted.id, inserted.name, inserted.display_name,
+                       inserted.db_name, inserted.is_default, inserted.is_archived,
+                       inserted.created_at
+                VALUES (?, ?, ?, ?)
+                """,
+                (body.name, body.display_name, db_name, ctx.user_email),
+            )
+            row = cursor.fetchone()
+            result = {
+                "id": row[0],
+                "name": row[1],
+                "display_name": row[2],
+                "db_name": row[3],
+                "is_default": bool(row[4]),
+                "is_archived": bool(row[5]),
+                "created_at": row[6].isoformat() if row[6] else None,
+            }
 
-        log_audit(
-            cursor, ctx, "create", "workspace", row[0],
-            f"Created workspace '{body.display_name}' (db: {db_name})",
-        )
+            log_audit(
+                cursor, ctx, "create", "workspace", row[0],
+                f"Created workspace '{body.display_name}' (db: {db_name})",
+            )
+    except Exception as e:
+        # Compensating action: drop the orphaned database to avoid resource leak
+        logger.error("Failed to register workspace in control DB — cleaning up orphaned database '%s': %s",
+                      db_name, e, exc_info=True)
+        try:
+            _drop_workspace_database(settings.azure_sql_server, db_name)
+        except Exception as cleanup_err:
+            logger.error("Failed to drop orphaned database '%s': %s (manual cleanup required)",
+                          db_name, cleanup_err)
+        raise HTTPException(500, f"Failed to register workspace: {e}")
 
     return result
 
 
-@admin_router.get("/workspaces")
+@admin_router.get("/workspaces", dependencies=[Depends(_require_workspace_mode)])
 async def list_workspaces(
     user: str = Depends(authenticate_and_store),
     ctx: WorkspaceContext = Depends(resolve_workspace),
@@ -377,7 +416,7 @@ async def list_workspaces(
     return {"workspaces": workspaces, "count": len(workspaces)}
 
 
-@admin_router.patch("/workspaces/{workspace_id}")
+@admin_router.patch("/workspaces/{workspace_id}", dependencies=[Depends(_require_workspace_mode)])
 async def archive_workspace(
     workspace_id: int,
     body: WorkspaceArchive,
@@ -417,7 +456,7 @@ async def archive_workspace(
     return {"message": f"Workspace {action}", "workspace_id": workspace_id}
 
 
-@admin_router.get("/workspaces/{workspace_id}/audit")
+@admin_router.get("/workspaces/{workspace_id}/audit", dependencies=[Depends(_require_workspace_mode)])
 async def get_workspace_audit(
     workspace_id: int,
     limit: int = Query(50, ge=1, le=500),
@@ -468,7 +507,7 @@ async def get_workspace_audit(
 # Member Management (Chair + Org Admin)
 # ==========================================================================
 
-@admin_router.post("/workspaces/{workspace_id}/members")
+@admin_router.post("/workspaces/{workspace_id}/members", dependencies=[Depends(_require_workspace_mode)])
 async def add_member(
     workspace_id: int,
     body: MemberAdd,
@@ -539,7 +578,7 @@ async def add_member(
     }
 
 
-@admin_router.get("/workspaces/{workspace_id}/members")
+@admin_router.get("/workspaces/{workspace_id}/members", dependencies=[Depends(_require_workspace_mode)])
 async def list_members(
     workspace_id: int,
     user: str = Depends(authenticate_and_store),
@@ -579,7 +618,7 @@ async def list_members(
     return {"members": members, "count": len(members)}
 
 
-@admin_router.patch("/workspaces/{workspace_id}/members/{user_id}")
+@admin_router.patch("/workspaces/{workspace_id}/members/{user_id}", dependencies=[Depends(_require_workspace_mode)])
 async def update_member_role(
     workspace_id: int,
     user_id: int,
@@ -591,22 +630,38 @@ async def update_member_role(
     _check_member_permission(ctx, workspace_id)
 
     with get_control_db() as cursor:
+        # Check current role — prevent demoting the only chair
+        cursor.execute(
+            "SELECT role FROM workspace_members WHERE user_id = ? AND workspace_id = ?",
+            (user_id, workspace_id),
+        )
+        current_row = cursor.fetchone()
+        if not current_row:
+            raise HTTPException(404, "Membership not found")
+
+        current_role = current_row[0]
+        if current_role == "chair" and body.role != "chair":
+            cursor.execute(
+                "SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ? AND role = 'chair' AND user_id != ?",
+                (workspace_id, user_id),
+            )
+            if cursor.fetchone()[0] == 0:
+                raise HTTPException(400, "Cannot demote the only chair of a workspace")
+
         cursor.execute(
             "UPDATE workspace_members SET role = ? WHERE user_id = ? AND workspace_id = ?",
             (body.role, user_id, workspace_id),
         )
-        if cursor.rowcount == 0:
-            raise HTTPException(404, "Membership not found")
 
         log_audit(
             cursor, ctx, "update", "member", user_id,
-            f"Changed role to {body.role} in workspace {workspace_id}",
+            f"Changed role from {current_role} to {body.role} in workspace {workspace_id}",
         )
 
     return {"message": f"Role updated to {body.role}", "user_id": user_id}
 
 
-@admin_router.delete("/workspaces/{workspace_id}/members/{user_id}")
+@admin_router.delete("/workspaces/{workspace_id}/members/{user_id}", dependencies=[Depends(_require_workspace_mode)])
 async def remove_member(
     workspace_id: int,
     user_id: int,

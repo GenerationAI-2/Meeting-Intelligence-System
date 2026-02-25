@@ -39,16 +39,14 @@ class WorkspaceContext:
         return self.active.db_name
 
     def can_write(self) -> bool:
-        """Can the user write in the active workspace?"""
-        if self.is_org_admin:
-            return True
+        """Can the user write in the active workspace? Based on role, not org_admin."""
         if self.active.is_archived:
             return False
         return self.active.role in ('member', 'chair')
 
     def is_chair_or_admin(self) -> bool:
-        """Can the user manage/delete in the active workspace?"""
-        return self.is_org_admin or self.active.role == 'chair'
+        """Can the user manage/delete in the active workspace? Based on role."""
+        return self.active.role == 'chair'
 
 
 def make_legacy_context(user_email: str) -> WorkspaceContext:

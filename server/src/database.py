@@ -582,9 +582,13 @@ def validate_token_from_control_db(token_hash: str) -> dict | None:
                 "default_workspace_id": default_workspace_id,
                 "memberships": memberships,
             }
-    except Exception as e:
-        logger.warning("Control DB token validation failed: %s", e)
-        return None
+    except (pyodbc.Error, Exception) as e:
+        # Re-raise as a specific error so callers can distinguish "token not found"
+        # (returns None) from "control DB unreachable" (raises).
+        # This prevents the fail-open pattern where a DB error is treated as "invalid token"
+        # and the caller falls back to legacy validation with admin privileges.
+        logger.error("Control DB token validation error — failing closed: %s", e)
+        raise
 
 
 # ============================================================================
