@@ -132,6 +132,9 @@ web/src/
 | Org admin expected to access all workspace data | `is_org_admin` only governs admin API (workspace CRUD, member management). Does NOT grant implicit data access to all workspaces. To access a workspace's data via MCP or API, an org admin must explicitly add themselves as a member — which gets audit logged. This is by design for data sovereignty. | 2026-02-25 |
 | `_run_workspace_schema` skips `CREATE TABLE` | `schema.sql` starts with `-- comments` before `CREATE TABLE Meeting`. The split-on-`;` + `startswith('--')` check skipped the entire first statement block. Fix: strip comment lines from each statement before checking if it's empty. | 2026-02-25 |
 | Admin API `POST /workspaces` needs MI `dbmanager` on master | Container app MI needs `dbmanager` role on the master database to execute `CREATE DATABASE`. Not granted by default. Fix: added to `deploy-new-client.sh` Step 2a. | 2026-02-25 |
+| `switch_workspace` doesn't persist across stateless HTTP requests | Streamable HTTP is stateless — each POST is a new request, so `set_mcp_workspace_context(ctx)` using contextvars dies at request end. Fix: in-memory `_workspace_override` dict in `mcp_server.py` keyed by user email, checked by `_resolve_ctx` before falling back to default. Stale overrides (e.g., removed from workspace) auto-clear. | 2026-02-26 |
+| Archiving workspace while UI has it selected causes 403 on all API calls | Web UI sends `X-Workspace-ID` header from stored state. If that workspace is archived, `_get_user_memberships()` excludes it (`AND w.is_archived = 0`), so `_resolve_active_workspace` raises 403 "Not a member". Fix: user must clear browser storage or hard refresh to reset to default workspace. Could be improved with server-side fallback. | 2026-02-26 |
+| OAuth identity has no workspace memberships | Claude.ai OAuth flow creates identity `oauth:<client_id>` which doesn't match any workspace member email. Result: `_get_user_memberships()` returns empty → 403. Use token auth (SSE with token param) instead of OAuth for MCP connections. | 2026-02-26 |
 
 ---
 
@@ -144,7 +147,9 @@ web/src/
 
 **What's working:**
 - 17 MCP tools for meetings (6), actions (7), decisions (4)
-- 6 database tables: Meeting, Action, Decision, ClientToken, OAuthClient, RefreshTokenUsage + `_MigrationHistory` tracking table
+- **P7 workspace architecture deployed to battletest** — multi-database isolation, RBAC (viewer/member/chair + org_admin), admin API, 229 tests passing
+- 6 database tables per workspace: Meeting, Action, Decision, ClientToken, OAuthClient, RefreshTokenUsage + `_MigrationHistory` tracking table
+- Control database tables: users, workspaces, workspace_members, audit_log
 - 4 transport methods: Streamable HTTP (`/mcp`), SSE (`/sse`), stdio (local), REST (`/api/*`)
 - Full CRUD for meetings, actions, decisions via MCP tools. Web UI is read-only for creation (no create/edit forms); only action status updates are supported in UI.
 - Delete operations for all entities (cascade delete for meetings done in application code, not FK constraints)
@@ -420,8 +425,9 @@ If you don't have access to Second Brain folder:
 | Demo | meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io | meeting-intelligence | 0-10 | Mark sign-off |
 | Marshall | mi-marshall.delightfulpebble-aa90cd5c.australiaeast.azurecontainerapps.io | mi-marshall | 1-10 | Test user (John Marshall) |
 | Testing Instance | mi-testing-instance.icycliff-e324f345.australiaeast.azurecontainerapps.io | mi-testing-instance | 1-10 | Client demos (Mark) |
+| Battletest | mi-battletest.whitedune-43b88d45.australiaeast.azurecontainerapps.io | mi-battletest + mi-battletest-control | 1-10 | P7 workspace RBAC testing |
 
-**Estimated monthly cost:** ~$33 AUD (team + demo scale-to-zero), Marshall + testing-instance are always-on (minReplicas=1)
+**Estimated monthly cost:** ~$33 AUD (team + demo scale-to-zero), Marshall + testing-instance + battletest are always-on (minReplicas=1)
 
 ---
 
