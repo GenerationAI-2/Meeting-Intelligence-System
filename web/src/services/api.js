@@ -11,6 +11,13 @@ export const setAccessTokenProvider = (provider) => {
     getAccessToken = provider;
 };
 
+// Workspace ID provider — set by WorkspaceContext on switch
+let currentWorkspaceId = null;
+
+export const setCurrentWorkspaceId = (id) => {
+    currentWorkspaceId = id;
+};
+
 async function fetchApi(endpoint, options = {}) {
     const url = `${apiConfig.baseUrl}${endpoint}`;
 
@@ -29,6 +36,10 @@ async function fetchApi(endpoint, options = {}) {
 
     if (token) {
         headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    if (currentWorkspaceId) {
+        headers['X-Workspace-ID'] = String(currentWorkspaceId);
     }
 
     const response = await fetch(url, {
@@ -76,6 +87,8 @@ export const meetingsApi = {
 
     search: (query, limit = 10) =>
         fetchApi(`/meetings/search?query=${encodeURIComponent(query)}&limit=${limit}`),
+
+    delete: (id) => fetchApi(`/meetings/${id}`, { method: 'DELETE' }),
 };
 
 // Actions API
@@ -94,6 +107,8 @@ export const actionsApi = {
         }),
 
     owners: () => fetchApi('/actions/owners'),
+
+    delete: (id) => fetchApi(`/actions/${id}`, { method: 'DELETE' }),
 };
 
 // Decisions API
@@ -104,4 +119,45 @@ export const decisionsApi = {
     },
 
     get: (id) => fetchApi(`/decisions/${id}`),
+
+    delete: (id) => fetchApi(`/decisions/${id}`, { method: 'DELETE' }),
+};
+
+// Workspace API
+export const workspaceApi = {
+    me: () => fetchApi('/me'),
+
+    // Admin endpoints
+    listWorkspaces: () => fetchApi('/admin/workspaces'),
+
+    createWorkspace: (data) =>
+        fetchApi('/admin/workspaces', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    archiveWorkspace: (id, isArchived) =>
+        fetchApi(`/admin/workspaces/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ is_archived: isArchived }),
+        }),
+
+    listMembers: (wsId) => fetchApi(`/admin/workspaces/${wsId}/members`),
+
+    addMember: (wsId, data) =>
+        fetchApi(`/admin/workspaces/${wsId}/members`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    updateMemberRole: (wsId, userId, role) =>
+        fetchApi(`/admin/workspaces/${wsId}/members/${userId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ role }),
+        }),
+
+    removeMember: (wsId, userId) =>
+        fetchApi(`/admin/workspaces/${wsId}/members/${userId}`, {
+            method: 'DELETE',
+        }),
 };

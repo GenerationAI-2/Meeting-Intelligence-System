@@ -89,7 +89,7 @@ module keyVault 'modules/keyvault.bicep' = {
   }
 }
 
-module sql 'modules/sql.bicep' = {
+module sql 'modules/sql-server.bicep' = {
   name: 'sql-${environmentName}'
   params: {
     environmentName: environmentName
@@ -111,6 +111,7 @@ module containerApp 'modules/container-app.bicep' = {
     containerImageTag: containerImageTag
     sqlServerFqdn: sql.outputs.sqlServerFqdn
     sqlDatabaseName: sql.outputs.sqlDatabaseName
+    controlDbName: sql.outputs.controlDbName
     azureTenantId: azureTenantId
     azureClientId: azureClientId
     allowedUsers: allowedUsers
@@ -149,4 +150,5 @@ output containerAppUrl string = 'https://${containerApp.outputs.fqdn}'
 output containerAppName string = containerApp.outputs.containerAppName
 output sqlServerName string = sql.outputs.sqlServerName
 output sqlDatabaseName string = sql.outputs.sqlDatabaseName
+output controlDbName string = sql.outputs.controlDbName
 output keyVaultName string = keyVault.outputs.keyVaultName

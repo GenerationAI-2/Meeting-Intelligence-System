@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { actionsApi } from '../services/api';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function ActionDetail() {
     const { id } = useParams();
+    const navigate = useNavigate();
+    const { permissions } = useWorkspace();
     const [action, setAction] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -124,42 +127,64 @@ function ActionDetail() {
                     )}
                 </dl>
 
-                {/* Status Change */}
-                <div className="border-t pt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Update Status</label>
-                    <div className="flex gap-2">
+                {/* Status Change — hidden for viewers */}
+                {permissions.can_write && (
+                    <div className="border-t pt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Update Status</label>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => handleStatusChange('Open')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                                    action.status === 'Open'
+                                        ? 'bg-blue-600 text-white'
+                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                }`}
+                            >
+                                Open
+                            </button>
+                            <button
+                                onClick={() => handleStatusChange('Complete')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                                    action.status === 'Complete'
+                                        ? 'bg-green-600 text-white'
+                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                }`}
+                            >
+                                Complete
+                            </button>
+                            <button
+                                onClick={() => handleStatusChange('Parked')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                                    action.status === 'Parked'
+                                        ? 'bg-yellow-600 text-white'
+                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                }`}
+                            >
+                                Parked
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Delete — chairs and org admins only */}
+                {permissions.is_chair_or_admin && (
+                    <div className="border-t pt-4">
                         <button
-                            onClick={() => handleStatusChange('Open')}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                                action.status === 'Open'
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
+                            onClick={async () => {
+                                if (!confirm('Delete this action? This cannot be undone.')) return;
+                                try {
+                                    await actionsApi.delete(id);
+                                    navigate('/actions');
+                                } catch (err) {
+                                    console.error('Delete failed:', err);
+                                }
+                            }}
+                            className="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100"
                         >
-                            Open
-                        </button>
-                        <button
-                            onClick={() => handleStatusChange('Complete')}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                                action.status === 'Complete'
-                                    ? 'bg-green-600 text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
-                        >
-                            Complete
-                        </button>
-                        <button
-                            onClick={() => handleStatusChange('Parked')}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                                action.status === 'Parked'
-                                    ? 'bg-yellow-600 text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
-                        >
-                            Parked
+                            Delete Action
                         </button>
                     </div>
-                </div>
+                )}
             </div>
         </div>
     );

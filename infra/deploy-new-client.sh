@@ -50,6 +50,7 @@ RESOURCE_GROUP="meeting-intelligence-${ENV}-rg"
 SQL_SERVER="mi-${ENV}-sql.database.windows.net"
 SQL_SERVER_NAME="mi-${ENV}-sql"
 SQL_DATABASE="mi-${ENV}"
+CONTROL_DATABASE="mi-${ENV}-control"
 
 echo "=== New Client Deployment: ${ENV} ==="
 echo ""
@@ -118,12 +119,12 @@ cleanup_firewall() {
         local output
         if output=$(az sql server firewall-rule delete \
             --server "$SQL_SERVER_NAME" -g "$RESOURCE_GROUP" \
-            --name "$FW_RULE_NAME" --yes 2>&1); then
+            --name "$FW_RULE_NAME" 2>&1); then
             echo "Firewall rule '${FW_RULE_NAME}': removed"
         else
             echo "ERROR: Failed to remove firewall rule '${FW_RULE_NAME}'"
             echo "  Output: ${output}"
-            echo "  Manual cleanup: az sql server firewall-rule delete --server $SQL_SERVER_NAME -g $RESOURCE_GROUP --name $FW_RULE_NAME --yes"
+            echo "  Manual cleanup: az sql server firewall-rule delete --server $SQL_SERVER_NAME -g $RESOURCE_GROUP --name $FW_RULE_NAME"
         fi
     fi
 }
@@ -284,17 +285,121 @@ fi
 echo ""
 
 # =========================================================================
-# PHASE 2: Database initialisation
+# PHASE 2: Database initialisation (control DB + general workspace DB)
 # =========================================================================
 echo "=========================================="
 echo "PHASE 2: Database initialisation"
 echo "=========================================="
 echo ""
+echo "Control DB:   ${CONTROL_DATABASE}"
+echo "General DB:   ${SQL_DATABASE}"
+echo ""
 
 DB_INIT_OK=true
 
-# Step 2a: Create managed identity DB user
-echo "--- Creating managed identity database user ---"
+# Load the grant-mi-access.sql template
+GRANT_MI_TEMPLATE="${REPO_ROOT}/scripts/grant-mi-access.sql"
+if [ ! -f "$GRANT_MI_TEMPLATE" ]; then
+    echo "WARNING: grant-mi-access.sql not found at ${GRANT_MI_TEMPLATE}"
+    echo "Using inline SQL for MI user creation"
+fi
+
+# Helper: run SQL against a database (sqlcmd preferred, Python fallback)
+run_sql_against_db() {
+    local target_db="$1"
+    local sql_text="$2"
+    local label="$3"
+
+    if [ "$HAS_SQLCMD" = true ]; then
+        if sqlcmd -S "$SQL_SERVER" -d "$target_db" -G --authentication-method=ActiveDirectoryDefault \
+            -Q "$sql_text" 2>&1; then
+            echo "  ${label}: OK"
+            return 0
+        else
+            echo "  WARNING: ${label} failed via sqlcmd"
+            return 1
+        fi
+    else
+        if python3 -c "
+import struct, sys
+try:
+    from azure.identity import DefaultAzureCredential
+    import pyodbc, re
+    credential = DefaultAzureCredential()
+    token_bytes = credential.get_token('https://database.windows.net/.default').token.encode('UTF-16-LE')
+    token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
+    conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};SERVER=${SQL_SERVER};DATABASE=${target_db};Encrypt=yes;TrustServerCertificate=no;'
+    conn = pyodbc.connect(conn_str, attrs_before={1256: token_struct})
+    cursor = conn.cursor()
+    sql = '''${sql_text}'''
+    for batch in re.split(r'^\s*GO\s*$', sql, flags=re.MULTILINE | re.IGNORECASE):
+        batch = batch.strip()
+        if batch:
+            cursor.execute(batch)
+    conn.commit()
+    conn.close()
+    print('  ${label}: OK')
+except Exception as e:
+    print(f'  ERROR: {e}')
+    sys.exit(1)
+" 2>&1; then
+            return 0
+        else
+            echo "  WARNING: ${label} failed via Python fallback"
+            return 1
+        fi
+    fi
+}
+
+# Helper: run SQL file against a database
+run_sql_file_against_db() {
+    local target_db="$1"
+    local sql_file="$2"
+    local label="$3"
+
+    if [ "$HAS_SQLCMD" = true ]; then
+        if sqlcmd -S "$SQL_SERVER" -d "$target_db" -G --authentication-method=ActiveDirectoryDefault \
+            -i "$sql_file" 2>&1; then
+            echo "  ${label}: OK"
+            return 0
+        else
+            echo "  WARNING: ${label} failed via sqlcmd"
+            return 1
+        fi
+    else
+        if python3 -c "
+import struct, sys, re
+try:
+    from azure.identity import DefaultAzureCredential
+    import pyodbc
+    credential = DefaultAzureCredential()
+    token_bytes = credential.get_token('https://database.windows.net/.default').token.encode('UTF-16-LE')
+    token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
+    conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};SERVER=${SQL_SERVER};DATABASE=${target_db};Encrypt=yes;TrustServerCertificate=no;'
+    conn = pyodbc.connect(conn_str, attrs_before={1256: token_struct})
+    cursor = conn.cursor()
+    sql = open('${sql_file}').read()
+    for batch in re.split(r'^\s*GO\s*\$', sql, flags=re.MULTILINE | re.IGNORECASE):
+        batch = batch.strip()
+        if batch:
+            cursor.execute(batch)
+    conn.commit()
+    conn.close()
+    print('  ${label}: OK')
+except Exception as e:
+    print(f'  ERROR: {e}')
+    sys.exit(1)
+" 2>&1; then
+            return 0
+        else
+            echo "  WARNING: ${label} failed via Python fallback"
+            return 1
+        fi
+    fi
+}
+
+# Step 2a: Grant MI access to BOTH databases
+echo "--- Step 2a: Grant managed identity access ---"
 MI_USER_SQL="IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '${APP_NAME}')
 BEGIN
     CREATE USER [${APP_NAME}] FROM EXTERNAL PROVIDER;
@@ -303,115 +408,98 @@ BEGIN
     PRINT 'User created and roles assigned';
 END
 ELSE
-    PRINT 'User already exists — skipping';"
+    PRINT 'User already exists -- skipping';"
 
-if [ "$HAS_SQLCMD" = true ]; then
-    if sqlcmd -S "$SQL_SERVER" -d "$SQL_DATABASE" -G --authentication-method=ActiveDirectoryDefault \
-        -Q "$MI_USER_SQL" 2>&1; then
-        echo "Managed identity user: OK"
-    else
-        echo "WARNING: Failed to create MI user via sqlcmd"
-        echo "You may need to create it manually — see instructions below"
-        DB_INIT_OK=false
-    fi
-else
-    echo "sqlcmd not available — attempting Python fallback..."
-    if python3 -c "
-import struct, sys
-sys.path.insert(0, '${REPO_ROOT}/server/src')
-try:
-    from azure.identity import DefaultAzureCredential
-    import pyodbc
-    credential = DefaultAzureCredential()
-    token_bytes = credential.get_token('https://database.windows.net/.default').token.encode('UTF-16-LE')
-    token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
-    conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};SERVER=${SQL_SERVER};DATABASE=${SQL_DATABASE};Encrypt=yes;TrustServerCertificate=no;'
-    conn = pyodbc.connect(conn_str, attrs_before={1256: token_struct})
-    cursor = conn.cursor()
-    cursor.execute(\"\"\"${MI_USER_SQL}\"\"\")
-    conn.commit()
-    conn.close()
-    print('Managed identity user: OK')
-except Exception as e:
-    print(f'ERROR: {e}')
-    sys.exit(1)
-" 2>&1; then
-        :  # Success message already printed by Python
-    else
-        echo "WARNING: Failed to create MI user"
-        DB_INIT_OK=false
-    fi
+echo "Granting MI access to control database (${CONTROL_DATABASE})..."
+if ! run_sql_against_db "$CONTROL_DATABASE" "$MI_USER_SQL" "MI user on control DB"; then
+    DB_INIT_OK=false
+fi
+
+echo "Granting MI access to general workspace database (${SQL_DATABASE})..."
+if ! run_sql_against_db "$SQL_DATABASE" "$MI_USER_SQL" "MI user on general DB"; then
+    DB_INIT_OK=false
+fi
+
+# Grant dbmanager on master so the admin API can create workspace databases at runtime
+echo "Granting MI dbmanager role on master (for workspace creation)..."
+MI_DBMANAGER_SQL="IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '${APP_NAME}')
+    CREATE USER [${APP_NAME}] FROM EXTERNAL PROVIDER;
+ALTER ROLE dbmanager ADD MEMBER [${APP_NAME}];
+PRINT 'dbmanager granted on master';"
+
+if ! run_sql_against_db "master" "$MI_DBMANAGER_SQL" "MI dbmanager on master"; then
+    echo "  WARNING: dbmanager grant failed (workspace creation via admin API will not work)"
 fi
 echo ""
 
-# Step 2b: Run schema
-echo "--- Applying database schema ---"
-if [ "$HAS_SQLCMD" = true ]; then
-    # Check if schema already applied (Meeting table exists)
-    TABLE_CHECK=$(sqlcmd -S "$SQL_SERVER" -d "$SQL_DATABASE" -G --authentication-method=ActiveDirectoryDefault \
-        -Q "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Meeting'" -h -1 2>/dev/null | xargs || echo "0")
-    if [ "$TABLE_CHECK" -gt 0 ] 2>/dev/null; then
-        echo "Schema already applied — skipping"
+# Step 2b: Apply control schema
+echo "--- Step 2b: Apply control database schema ---"
+CONTROL_SCHEMA_FILE="${REPO_ROOT}/scripts/control_schema.sql"
+if [ ! -f "$CONTROL_SCHEMA_FILE" ]; then
+    echo "  ERROR: Control schema file not found: ${CONTROL_SCHEMA_FILE}"
+    DB_INIT_OK=false
+else
+    # Check if already applied
+    CONTROL_TABLE_CHECK="0"
+    if [ "$HAS_SQLCMD" = true ]; then
+        CONTROL_TABLE_CHECK=$(sqlcmd -S "$SQL_SERVER" -d "$CONTROL_DATABASE" -G --authentication-method=ActiveDirectoryDefault \
+            -Q "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'workspaces'" -h -1 2>/dev/null | xargs || echo "0")
+    fi
+    if [ "$CONTROL_TABLE_CHECK" -gt 0 ] 2>/dev/null; then
+        echo "  Control schema already applied -- skipping"
     else
-        if sqlcmd -S "$SQL_SERVER" -d "$SQL_DATABASE" -G --authentication-method=ActiveDirectoryDefault \
-            -i "${REPO_ROOT}/schema.sql" 2>&1; then
-            echo "Schema: OK"
-        else
-            echo "WARNING: Failed to apply schema"
+        if ! run_sql_file_against_db "$CONTROL_DATABASE" "$CONTROL_SCHEMA_FILE" "Control schema"; then
             DB_INIT_OK=false
         fi
     fi
+fi
+echo ""
+
+# Step 2c: Apply workspace schema (schema.sql) to general database
+echo "--- Step 2c: Apply workspace database schema ---"
+WORKSPACE_SCHEMA_FILE="${REPO_ROOT}/schema.sql"
+# Check if already applied
+WS_TABLE_CHECK="0"
+if [ "$HAS_SQLCMD" = true ]; then
+    WS_TABLE_CHECK=$(sqlcmd -S "$SQL_SERVER" -d "$SQL_DATABASE" -G --authentication-method=ActiveDirectoryDefault \
+        -Q "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Meeting'" -h -1 2>/dev/null | xargs || echo "0")
+fi
+if [ "$WS_TABLE_CHECK" -gt 0 ] 2>/dev/null; then
+    echo "  Workspace schema already applied -- skipping"
 else
-    echo "sqlcmd not available — attempting Python fallback..."
-    if python3 -c "
-import struct, sys
-sys.path.insert(0, '${REPO_ROOT}/server/src')
-try:
-    from azure.identity import DefaultAzureCredential
-    import pyodbc
-    credential = DefaultAzureCredential()
-    token_bytes = credential.get_token('https://database.windows.net/.default').token.encode('UTF-16-LE')
-    token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
-    conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};SERVER=${SQL_SERVER};DATABASE=${SQL_DATABASE};Encrypt=yes;TrustServerCertificate=no;'
-    conn = pyodbc.connect(conn_str, attrs_before={1256: token_struct})
-    cursor = conn.cursor()
-    # Check if already applied
-    cursor.execute(\"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Meeting'\")
-    if cursor.fetchone()[0] > 0:
-        print('Schema already applied — skipping')
-    else:
-        schema = open('${REPO_ROOT}/schema.sql').read()
-        import re
-        for batch in re.split(r'^\s*GO\s*$', schema, flags=re.MULTILINE | re.IGNORECASE):
-            batch = batch.strip()
-            if batch:
-                cursor.execute(batch)
-        conn.commit()
-        print('Schema: OK')
-    conn.close()
-except Exception as e:
-    print(f'ERROR: {e}')
-    sys.exit(1)
-" 2>&1; then
-        :  # Success message already printed by Python
-    else
-        echo "WARNING: Failed to apply schema"
+    if ! run_sql_file_against_db "$SQL_DATABASE" "$WORKSPACE_SCHEMA_FILE" "Workspace schema"; then
         DB_INIT_OK=false
     fi
 fi
 echo ""
 
-# Step 2c: Run migrations
-echo "--- Running database migrations ---"
+# Step 2d: Run migrations on general workspace database
+echo "--- Step 2d: Run workspace database migrations ---"
 if cd "${REPO_ROOT}/server" && uv run python -m scripts.migrate \
     --server "$SQL_SERVER" --database "$SQL_DATABASE" 2>&1; then
-    echo "Migrations: OK"
+    echo "  Migrations: OK"
 else
-    echo "WARNING: Migration runner failed"
-    echo "You can run manually: cd server && uv run python -m scripts.migrate --server $SQL_SERVER --database $SQL_DATABASE"
+    echo "  WARNING: Migration runner failed"
+    echo "  Run manually: cd server && uv run python -m scripts.migrate --server $SQL_SERVER --database $SQL_DATABASE"
     DB_INIT_OK=false
 fi
 cd "$REPO_ROOT"
+echo ""
+
+# Step 2e: Seed General workspace in control database
+echo "--- Step 2e: Seed General workspace ---"
+SEED_SQL="IF NOT EXISTS (SELECT 1 FROM workspaces WHERE name = 'general')
+BEGIN
+    INSERT INTO workspaces (name, display_name, db_name, is_default, created_by)
+    VALUES ('general', 'General', '${SQL_DATABASE}', 1, 'system@generationai.co.nz');
+    PRINT 'General workspace seeded';
+END
+ELSE
+    PRINT 'General workspace already exists -- skipping';"
+
+if ! run_sql_against_db "$CONTROL_DATABASE" "$SEED_SQL" "Seed General workspace"; then
+    DB_INIT_OK=false
+fi
 echo ""
 
 if [ "$DB_INIT_OK" = false ]; then
@@ -431,13 +519,15 @@ echo ""
 TOKEN_OK=true
 if [ "$DB_INIT_OK" = true ]; then
     echo "Creating client token for ${ENV}..."
-    # Set DB env vars for manage_tokens.py (it reads from config.py)
+    # Set DB env vars for manage_tokens.py (reads AZURE_SQL_SERVER + CONTROL_DB_NAME)
     export AZURE_SQL_SERVER="$SQL_SERVER"
     export AZURE_SQL_DATABASE="$SQL_DATABASE"
+    export CONTROL_DB_NAME="$CONTROL_DATABASE"
 
     TOKEN_OUTPUT=$(cd "${REPO_ROOT}/server" && uv run python scripts/manage_tokens.py create \
-        --client "$ENV" \
-        --email "$PRIMARY_EMAIL" \
+        --user "$PRIMARY_EMAIL" \
+        --workspace "general" \
+        --role "chair" \
         --notes "Auto-generated by deploy-new-client.sh" 2>&1) || TOKEN_OK=false
 
     if [ "$TOKEN_OK" = true ]; then
@@ -447,15 +537,15 @@ if [ "$DB_INIT_OK" = true ]; then
         echo "$TOKEN_OUTPUT"
         echo ""
         echo "Create manually:"
-        echo "  cd server && AZURE_SQL_SERVER=$SQL_SERVER AZURE_SQL_DATABASE=$SQL_DATABASE \\"
-        echo "    uv run python scripts/manage_tokens.py create --client '$ENV' --email '$PRIMARY_EMAIL'"
+        echo "  cd server && AZURE_SQL_SERVER=$SQL_SERVER CONTROL_DB_NAME=$CONTROL_DATABASE \\"
+        echo "    uv run python scripts/manage_tokens.py create --user '$PRIMARY_EMAIL' --workspace general --role chair"
     fi
 else
     echo "SKIPPED: Database init had failures — token creation requires working DB"
     echo ""
     echo "Create manually after fixing DB:"
-    echo "  cd server && AZURE_SQL_SERVER=$SQL_SERVER AZURE_SQL_DATABASE=$SQL_DATABASE \\"
-    echo "    uv run python scripts/manage_tokens.py create --client '$ENV' --email '$PRIMARY_EMAIL'"
+    echo "  cd server && AZURE_SQL_SERVER=$SQL_SERVER CONTROL_DB_NAME=$CONTROL_DATABASE \\"
+    echo "    uv run python scripts/manage_tokens.py create --user '$PRIMARY_EMAIL' --workspace general --role chair"
     TOKEN_OK=false
 fi
 echo ""
@@ -525,6 +615,9 @@ echo "=========================================="
 echo ""
 echo "Environment:  ${ENV}"
 echo "Container:    ${APP_NAME}"
+echo "SQL Server:   ${SQL_SERVER_NAME}"
+echo "Control DB:   ${CONTROL_DATABASE}"
+echo "General DB:   ${SQL_DATABASE}"
 echo "URL:          https://${FQDN}"
 echo "Health:       https://${FQDN}/health/ready"
 echo "MCP (SSE):    https://${FQDN}/sse?token=<TOKEN>"
@@ -559,17 +652,26 @@ if [ "$DB_INIT_OK" = false ]; then
     HAS_MANUAL_STEPS=true
     echo "--- Database manual steps ---"
     echo ""
-    echo "1. Create managed identity user (if not already done):"
+    echo "1. Grant MI access to both databases (run against each):"
+    echo "   sqlcmd -S $SQL_SERVER -d $CONTROL_DATABASE -G --authentication-method=ActiveDirectoryDefault"
     echo "   sqlcmd -S $SQL_SERVER -d $SQL_DATABASE -G --authentication-method=ActiveDirectoryDefault"
     echo "   > CREATE USER [${APP_NAME}] FROM EXTERNAL PROVIDER;"
     echo "   > ALTER ROLE db_datareader ADD MEMBER [${APP_NAME}];"
     echo "   > ALTER ROLE db_datawriter ADD MEMBER [${APP_NAME}];"
     echo ""
-    echo "2. Apply schema (if not already done):"
+    echo "2. Apply control schema:"
+    echo "   sqlcmd -S $SQL_SERVER -d $CONTROL_DATABASE -G --authentication-method=ActiveDirectoryDefault -i scripts/control_schema.sql"
+    echo ""
+    echo "3. Apply workspace schema:"
     echo "   sqlcmd -S $SQL_SERVER -d $SQL_DATABASE -G --authentication-method=ActiveDirectoryDefault -i schema.sql"
     echo ""
-    echo "3. Run migrations:"
+    echo "4. Run migrations on workspace DB:"
     echo "   cd server && uv run python -m scripts.migrate --server $SQL_SERVER --database $SQL_DATABASE"
+    echo ""
+    echo "5. Seed General workspace:"
+    echo "   sqlcmd -S $SQL_SERVER -d $CONTROL_DATABASE -G --authentication-method=ActiveDirectoryDefault"
+    echo "   > INSERT INTO workspaces (name, display_name, db_name, is_default, created_by)"
+    echo "     VALUES ('general', 'General', '$SQL_DATABASE', 1, 'system@generationai.co.nz');"
     echo ""
 fi
 
@@ -578,8 +680,8 @@ if [ "$TOKEN_OK" = false ]; then
     echo "--- Token manual step ---"
     echo ""
     echo "Create token:"
-    echo "  cd server && AZURE_SQL_SERVER=$SQL_SERVER AZURE_SQL_DATABASE=$SQL_DATABASE \\"
-    echo "    uv run python scripts/manage_tokens.py create --client '$ENV' --email '$PRIMARY_EMAIL'"
+    echo "  cd server && AZURE_SQL_SERVER=$SQL_SERVER CONTROL_DB_NAME=$CONTROL_DATABASE \\"
+    echo "    uv run python scripts/manage_tokens.py create --user '$PRIMARY_EMAIL' --workspace general --role chair"
     echo ""
 fi
 

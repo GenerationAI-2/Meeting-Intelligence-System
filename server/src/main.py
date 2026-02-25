@@ -7,7 +7,10 @@ import contextlib
 import time as _time
 
 from .logging_config import configure_logging, get_logger
-from .mcp_server import mcp, set_mcp_user
+from .mcp_server import mcp, set_mcp_user, set_mcp_workspace_context
+from .workspace_context import make_legacy_context
+from . import database as _db_module
+from .database import EngineRegistry
 
 # Configure logging at module load (before any other imports that might log)
 configure_logging()
@@ -32,8 +35,9 @@ def run_http():
     from starlette.responses import JSONResponse as StarletteJSONResponse
 
     from .api import app as api_app  # REST API endpoints
+    from .admin import admin_router
     from .config import get_settings
-    from .database import validate_client_token
+    from .database import validate_client_token, validate_token_from_control_db
     from .oauth import router as oauth_router, validate_oauth_token, init_oauth_clients
 
     settings = get_settings()
@@ -45,11 +49,63 @@ def run_http():
     TOKEN_CACHE_TTL = 300  # 5 minutes
     TOKEN_CACHE_MAX_SIZE = 1000
 
+    # Workspace context cache — avoids control DB hit on every MCP request
+    # Keyed by email, same TTL as token cache
+    _workspace_cache: dict[str, dict] = {}  # {email: {"ctx": WorkspaceContext, "expires": float}}
+
+    def _resolve_workspace_for_mcp(email: str) -> None:
+        """Resolve workspace context for MCP requests and set on contextvar.
+
+        Uses in-memory cache with same TTL as token cache.
+        In legacy mode (no control_db_name), always uses make_legacy_context.
+        """
+        now = _time.time()
+
+        # Check cache first
+        cached = _workspace_cache.get(email)
+        if cached and cached["expires"] > now:
+            set_mcp_workspace_context(cached["ctx"])
+            return
+
+        # Resolve workspace context
+        if settings.control_db_name and _db_module.engine_registry:
+            try:
+                from .dependencies import _get_user_memberships, _resolve_active_workspace
+                from .workspace_context import WorkspaceContext
+                from .database import get_control_db
+                with get_control_db() as cursor:
+                    is_org_admin, default_ws_id, memberships = _get_user_memberships(cursor, email)
+                if memberships:
+                    active = _resolve_active_workspace(memberships, None, default_ws_id)
+                    ctx = WorkspaceContext(
+                        user_email=email,
+                        is_org_admin=is_org_admin,
+                        memberships=memberships,
+                        active=active,
+                    )
+                else:
+                    ctx = make_legacy_context(email)
+            except Exception as e:
+                logger.warning("Failed to resolve workspace for MCP user %s: %s", email, e)
+                ctx = make_legacy_context(email)
+        else:
+            ctx = make_legacy_context(email)
+
+        # Cache the result
+        _workspace_cache[email] = {"ctx": ctx, "expires": _time.time() + TOKEN_CACHE_TTL}
+        # Enforce max size
+        if len(_workspace_cache) > TOKEN_CACHE_MAX_SIZE:
+            oldest_key = min(_workspace_cache, key=lambda k: _workspace_cache[k]["expires"])
+            del _workspace_cache[oldest_key]
+
+        set_mcp_workspace_context(ctx)
+
     async def validate_mcp_token(token: str) -> str | None:
         """Validate MCP token. Returns client email if valid, None if not.
 
-        Uses in-memory cache with 5-minute TTL and max size to reduce DB load.
-        Protected by asyncio.Lock for concurrent access safety.
+        When control_db_name is configured, validates against control DB tokens table
+        and pre-caches the full WorkspaceContext (avoids double control DB query).
+        Falls back to legacy ClientToken validation when control DB is not configured.
         """
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         now = _time.time()
@@ -65,20 +121,61 @@ def run_http():
             for k in expired:
                 del _token_cache[k]
 
-        # Cache miss — check database (outside lock to avoid holding it during I/O)
-        result = validate_client_token(token_hash)
+        # Cache miss — try control DB first when configured
+        email = None
+        if settings.control_db_name and _db_module.engine_registry:
+            result = validate_token_from_control_db(token_hash)
+            if result and result.get("user_email"):
+                email = result["user_email"]
+                # Build and cache WorkspaceContext from token result
+                from .workspace_context import WorkspaceMembership, WorkspaceContext
+                from .dependencies import _resolve_active_workspace
+                memberships = [
+                    WorkspaceMembership(
+                        workspace_id=m["workspace_id"],
+                        workspace_name=m["workspace_name"],
+                        workspace_display_name=m["workspace_display_name"],
+                        db_name=m["db_name"],
+                        role=m["role"],
+                        is_default=m["is_default"],
+                        is_archived=m["is_archived"],
+                    )
+                    for m in result.get("memberships", [])
+                ]
+                if memberships:
+                    active = _resolve_active_workspace(
+                        memberships, None, result.get("default_workspace_id"),
+                    )
+                    ctx = WorkspaceContext(
+                        user_email=email,
+                        is_org_admin=result.get("is_org_admin", False),
+                        memberships=memberships,
+                        active=active,
+                    )
+                else:
+                    ctx = make_legacy_context(email)
+                # Pre-cache workspace context (avoids second control DB query)
+                _workspace_cache[email] = {
+                    "ctx": ctx,
+                    "expires": _time.time() + TOKEN_CACHE_TTL,
+                }
+
+        # Fallback: legacy workspace DB ClientToken table
+        if not email:
+            result = validate_client_token(token_hash)
+            if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
+                email = result["client_email"]
 
         async with _token_cache_lock:
-            if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
-                # Enforce max cache size — evict oldest entries if full
+            if email:
                 if len(_token_cache) >= TOKEN_CACHE_MAX_SIZE:
                     oldest_key = min(_token_cache, key=lambda k: _token_cache[k]["expires_cache"])
                     del _token_cache[oldest_key]
                 _token_cache[token_hash] = {
-                    "email": result["client_email"],
+                    "email": email,
                     "expires_cache": _time.time() + TOKEN_CACHE_TTL,
                 }
-                return result["client_email"]
+                return email
 
             # Invalid — remove from cache if present
             _token_cache.pop(token_hash, None)
@@ -95,10 +192,20 @@ def run_http():
         from .oauth import get_jwt_secret
         get_jwt_secret()
 
+        # Initialize engine registry for multi-database support
+        if settings.azure_sql_server:
+            _db_module.engine_registry = EngineRegistry(settings.azure_sql_server)
+            logger.info("Engine registry initialized for server: %s", settings.azure_sql_server)
+
         # Load OAuth clients from database into memory on startup
         init_oauth_clients()
         async with mcp.session_manager.run():
             yield
+
+        # Cleanup engine registry on shutdown
+        if _db_module.engine_registry:
+            _db_module.engine_registry.dispose_all()
+            logger.info("Engine registry disposed")
 
     # Create main app with lifespan
     app = FastAPI(title="Meeting Intelligence", lifespan=lifespan)
@@ -247,7 +354,7 @@ def run_http():
         allow_origins=settings.get_cors_origins_list(),
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE", "OPTIONS", "PATCH"],
-        allow_headers=["Authorization", "Content-Type", "Accept", "X-API-Key", "mcp-protocol-version", "mcp-session-id"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-API-Key", "X-Workspace-ID", "mcp-protocol-version", "mcp-session-id"],
         expose_headers=["mcp-session-id"],
     )
 
@@ -323,7 +430,9 @@ def run_http():
                     oauth_payload = validate_oauth_token(bearer_token)
                     if oauth_payload:
                         # Valid OAuth token — attribute to OAuth client_id
-                        set_mcp_user(f"oauth:{oauth_payload.get('sub', 'unknown')}")
+                        oauth_email = f"oauth:{oauth_payload.get('sub', 'unknown')}"
+                        set_mcp_user(oauth_email)
+                        _resolve_workspace_for_mcp(oauth_email)
                         return await call_next(request)
 
         if not token:
@@ -334,6 +443,7 @@ def run_http():
         if not email:
             return Response("Unauthorized", status_code=401)
         set_mcp_user(email)
+        _resolve_workspace_for_mcp(email)
 
         return await call_next(request)
 
@@ -347,6 +457,9 @@ def run_http():
 
     # Mount OAuth endpoints (for ChatGPT support)
     app.include_router(oauth_router)
+
+    # Mount Admin API (workspace CRUD + member management)
+    app.include_router(admin_router, prefix="/api/admin")
 
     # Mount REST API - api_app routes are /api/*, so include directly
     # Since api_app already has /api prefix, we add its routes to main app

@@ -25,7 +25,7 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
 
 from .config import get_settings
-from .database import save_oauth_client, load_all_oauth_clients, validate_client_token, consume_refresh_token
+from .database import save_oauth_client, load_all_oauth_clients, validate_client_token, validate_token_from_control_db, consume_refresh_token
 
 logger = logging.getLogger(__name__)
 
@@ -163,11 +163,19 @@ def _validate_redirect_uri(uri: str) -> bool:
 def _validate_mcp_token(token: str) -> str | None:
     """Validate an MCP client token. Returns client email if valid, None if not.
 
-    Uses the same SHA256 hash → ClientToken table lookup as the auth middleware.
+    Tries control DB tokens table first when configured, falls back to
+    legacy workspace DB ClientToken table.
     """
     if not token:
         return None
     token_hash = hashlib.sha256(token.encode()).hexdigest()
+    # Try control DB first when configured
+    settings = get_settings()
+    if settings.control_db_name:
+        result = validate_token_from_control_db(token_hash)
+        if result and result.get("user_email"):
+            return result["user_email"]
+    # Fallback: legacy workspace DB ClientToken table
     result = validate_client_token(token_hash)
     if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
         return result["client_email"]

@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """
-Token management CLI for Meeting Intelligence.
+Token management CLI for Meeting Intelligence — Control Database.
+
+Manages tokens, users, and workspace memberships in the control database.
 
 Usage:
-  python manage_tokens.py create --client "Claude Desktop" --email "user@company.com" --expires 365
+  python manage_tokens.py create --user EMAIL --workspace WORKSPACE --role ROLE [--expires DAYS] [--notes TEXT]
   python manage_tokens.py list
-  python manage_tokens.py revoke --token-id 3
-  python manage_tokens.py rotate --token-id 3 --expires 365
-  python manage_tokens.py migrate  # One-time: import from MCP_AUTH_TOKENS env var
+  python manage_tokens.py revoke --token-id ID
+  python manage_tokens.py add-membership --user EMAIL --workspace WORKSPACE --role ROLE
+  python manage_tokens.py remove-membership --user EMAIL --workspace WORKSPACE
+  python manage_tokens.py list-users
 
 Requires:
   - pyodbc (with ODBC Driver 18 for SQL Server)
   - azure-identity
-  - Environment variables: AZURE_SQL_SERVER, AZURE_SQL_DATABASE
+  - Environment variables: AZURE_SQL_SERVER, CONTROL_DB_NAME
 """
 
 import argparse
 import hashlib
-import json
 import os
 import secrets
 import struct
@@ -36,19 +38,22 @@ def hash_token(plaintext: str) -> str:
 
 
 def _get_connection():
-    """Create a pyodbc connection with Azure AD token auth.
+    """Create a pyodbc connection to the control database with Azure AD token auth.
 
-    Reads AZURE_SQL_SERVER and AZURE_SQL_DATABASE from environment variables.
-    Uses DefaultAzureCredential (picks up az login on dev machines, managed identity in Azure).
+    Reads AZURE_SQL_SERVER and CONTROL_DB_NAME from environment variables.
+    Uses DefaultAzureCredential (picks up az login on dev, managed identity in Azure).
     """
     import pyodbc
     from azure.identity import DefaultAzureCredential
 
     server = os.environ.get("AZURE_SQL_SERVER", "")
-    database = os.environ.get("AZURE_SQL_DATABASE", "meeting-intelligence")
+    database = os.environ.get("CONTROL_DB_NAME", "")
 
     if not server:
         print("Error: AZURE_SQL_SERVER environment variable not set.")
+        raise SystemExit(1)
+    if not database:
+        print("Error: CONTROL_DB_NAME environment variable not set.")
         raise SystemExit(1)
 
     credential = DefaultAzureCredential()
@@ -90,7 +95,52 @@ def _rows_to_list(cursor, rows):
     return [dict(zip(columns, row)) for row in rows]
 
 
+def _get_or_create_user(cursor, email, created_by="cli-admin"):
+    """Get existing user ID or create a new user. Returns user_id."""
+    cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    if row:
+        return row[0]
+    display_name = email.split("@")[0]
+    cursor.execute(
+        """
+        INSERT INTO users (email, display_name, created_by)
+        OUTPUT inserted.id
+        VALUES (?, ?, ?)
+        """,
+        (email, display_name, created_by),
+    )
+    return cursor.fetchone()[0]
+
+
+def _get_workspace_id(cursor, workspace_name):
+    """Look up workspace by name (slug). Returns workspace_id or None."""
+    cursor.execute("SELECT id FROM workspaces WHERE name = ?", (workspace_name,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def _ensure_membership(cursor, user_id, workspace_id, role, added_by="cli-admin"):
+    """Create workspace membership if it doesn't exist. Returns True if created."""
+    cursor.execute(
+        "SELECT id FROM workspace_members WHERE user_id = ? AND workspace_id = ?",
+        (user_id, workspace_id),
+    )
+    if cursor.fetchone():
+        return False
+    cursor.execute(
+        "INSERT INTO workspace_members (user_id, workspace_id, role, added_by) VALUES (?, ?, ?, ?)",
+        (user_id, workspace_id, role, added_by),
+    )
+    return True
+
+
+# ==========================================================================
+# Commands
+# ==========================================================================
+
 def cmd_create(args):
+    """Create a user, assign to workspace, and generate a token."""
     plaintext_token = secrets.token_urlsafe(32)
     token_hash = hash_token(plaintext_token)
 
@@ -99,18 +149,37 @@ def cmd_create(args):
         expires_at = datetime.now(timezone.utc) + timedelta(days=args.expires)
 
     with get_db() as cursor:
+        # 1. Get or create user
+        user_id = _get_or_create_user(cursor, args.user)
+
+        # 2. Verify workspace exists
+        workspace_id = _get_workspace_id(cursor, args.workspace)
+        if workspace_id is None:
+            print(f"Error: Workspace '{args.workspace}' not found.")
+            print("Available workspaces:")
+            cursor.execute("SELECT name, display_name FROM workspaces ORDER BY name")
+            for row in cursor.fetchall():
+                print(f"  {row[0]} ({row[1]})")
+            return
+
+        # 3. Create or verify membership
+        created = _ensure_membership(cursor, user_id, workspace_id, args.role)
+        membership_status = "created" if created else "already exists"
+
+        # 4. Generate token
+        client_name = f"{args.user.split('@')[0]}-{args.workspace}"
         cursor.execute(
             """
-            INSERT INTO ClientToken (TokenHash, ClientName, ClientEmail, CreatedBy, ExpiresAt, Notes)
+            INSERT INTO tokens (token_hash, user_id, client_name, created_by, expires_at, notes)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (token_hash, args.client, args.email, "cli-admin", expires_at, args.notes)
+            (token_hash, user_id, client_name, "cli-admin", expires_at, args.notes),
         )
 
     print(f"\n=== Token Created ===")
-    print(f"Client:  {args.client}")
-    print(f"Email:   {args.email}")
-    print(f"Expires: {expires_at.isoformat() if expires_at else 'never'}")
+    print(f"User:       {args.user}")
+    print(f"Workspace:  {args.workspace} (role: {args.role}, membership {membership_status})")
+    print(f"Expires:    {expires_at.isoformat() if expires_at else 'never'}")
     print()
     print(f"TOKEN (save this -- it will NOT be shown again):")
     print(f"  {plaintext_token}")
@@ -123,13 +192,15 @@ def cmd_create(args):
 
 
 def cmd_list(args):
+    """List all tokens with user and workspace info."""
     with get_db() as cursor:
         cursor.execute(
             """
-            SELECT TokenId, ClientName, ClientEmail, IsActive,
-                   ExpiresAt, CreatedAt, CreatedBy, LastUsedAt, Notes
-            FROM ClientToken
-            ORDER BY CreatedAt DESC
+            SELECT t.id, t.client_name, u.email, t.is_active,
+                   t.expires_at, t.created_at, t.created_by, t.notes
+            FROM tokens t
+            JOIN users u ON u.id = t.user_id
+            ORDER BY t.created_at DESC
             """
         )
         tokens = _rows_to_list(cursor, cursor.fetchall())
@@ -138,22 +209,22 @@ def cmd_list(args):
         print("No tokens found.")
         return
 
-    print(f"\n{'ID':<5} {'Client':<20} {'Email':<30} {'Active':<8} {'Expires':<25} {'Last Used':<25}")
-    print("-" * 120)
+    print(f"\n{'ID':<5} {'Client':<25} {'Email':<30} {'Active':<8} {'Expires':<25}")
+    print("-" * 100)
     for t in tokens:
         print(
-            f"{t['TokenId']:<5} {t['ClientName']:<20} {t['ClientEmail']:<30} "
-            f"{'Yes' if t['IsActive'] else 'No':<8} "
-            f"{str(t['ExpiresAt'] or 'Never'):<25} "
-            f"{str(t['LastUsedAt'] or 'Never'):<25}"
+            f"{t['id']:<5} {(t['client_name'] or ''):<25} {t['email']:<30} "
+            f"{'Yes' if t['is_active'] else 'No':<8} "
+            f"{str(t['expires_at'] or 'Never'):<25}"
         )
 
 
 def cmd_revoke(args):
+    """Revoke a token by ID."""
     with get_db() as cursor:
         cursor.execute(
-            "UPDATE ClientToken SET IsActive = 0 WHERE TokenId = ?",
-            (args.token_id,)
+            "UPDATE tokens SET is_active = 0, revoked_at = SYSUTCDATETIME() WHERE id = ?",
+            (args.token_id,),
         )
         if cursor.rowcount > 0:
             print(f"Token {args.token_id} revoked. May remain cached for up to 5 minutes.")
@@ -161,111 +232,117 @@ def cmd_revoke(args):
             print(f"Token {args.token_id} not found.")
 
 
-def cmd_rotate(args):
-    # Get old token's client info
+def cmd_add_membership(args):
+    """Add a user to a workspace."""
     with get_db() as cursor:
-        cursor.execute(
-            """
-            SELECT TokenId, ClientName, ClientEmail, IsActive,
-                   ExpiresAt, CreatedAt, CreatedBy, LastUsedAt, Notes
-            FROM ClientToken
-            ORDER BY CreatedAt DESC
-            """
-        )
-        tokens = _rows_to_list(cursor, cursor.fetchall())
-
-    old_token = next((t for t in tokens if t["TokenId"] == args.token_id), None)
-    if not old_token:
-        print(f"Error: Token {args.token_id} not found.")
-        return
-
-    # Revoke old token
-    with get_db() as cursor:
-        cursor.execute(
-            "UPDATE ClientToken SET IsActive = 0 WHERE TokenId = ?",
-            (args.token_id,)
-        )
-    print(f"Old token {args.token_id} revoked.")
-
-    # Create new token with same client info
-    plaintext_token = secrets.token_urlsafe(32)
-    token_hash = hash_token(plaintext_token)
-
-    expires_at = None
-    if args.expires is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=args.expires)
-
-    with get_db() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO ClientToken (TokenHash, ClientName, ClientEmail, CreatedBy, ExpiresAt, Notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (token_hash, old_token["ClientName"], old_token["ClientEmail"],
-             "cli-admin-rotation", expires_at,
-             f"Rotated from TokenId {args.token_id}")
-        )
-
-    print(f"\n=== New Token Created ===")
-    print(f"TOKEN (save this -- it will NOT be shown again):")
-    print(f"  {plaintext_token}")
-
-
-def cmd_migrate(args):
-    """One-time migration from MCP_AUTH_TOKENS env var.
-
-    The legacy system stored hashes as tokens — clients sent the hash directly.
-    The existing_hash values are already SHA256(plaintext), so we store them
-    directly. Do NOT re-hash (that was the old double-hash bug).
-
-    NOTE: Legacy clients using hash-as-token will need new tokens via 'create'.
-    """
-    if args.json:
-        tokens = json.loads(args.json)
-    else:
-        mcp_auth_tokens = os.environ.get("MCP_AUTH_TOKENS", "")
-        if not mcp_auth_tokens:
-            print("No tokens found in MCP_AUTH_TOKENS environment variable.")
+        user_id = _get_or_create_user(cursor, args.user)
+        workspace_id = _get_workspace_id(cursor, args.workspace)
+        if workspace_id is None:
+            print(f"Error: Workspace '{args.workspace}' not found.")
             return
-        tokens = json.loads(mcp_auth_tokens)
 
-    if not tokens:
-        print("No tokens found in MCP_AUTH_TOKENS.")
-        return
+        created = _ensure_membership(cursor, user_id, workspace_id, args.role)
+        if created:
+            print(f"Added {args.user} as {args.role} to workspace '{args.workspace}'.")
+        else:
+            # Update role if membership already exists
+            cursor.execute(
+                "UPDATE workspace_members SET role = ? WHERE user_id = ? AND workspace_id = ?",
+                (args.role, user_id, workspace_id),
+            )
+            print(f"Updated {args.user} role to {args.role} in workspace '{args.workspace}'.")
 
-    print(f"Migrating {len(tokens)} tokens from environment variable...")
-    for existing_hash, email in tokens.items():
-        # existing_hash is already SHA256(plaintext) — store directly, do NOT re-hash.
-        # (Previously this did SHA256(existing_hash) = double-hash, which was wrong.)
-        client_name = email.split("@")[0]
-        print(f"  Migrating: {email} (hash: {existing_hash[:12]}...)")
 
-        try:
-            with get_db() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO ClientToken (TokenHash, ClientName, ClientEmail, CreatedBy, Notes)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (existing_hash, client_name, email, "cli-migration",
-                     "Migrated from MCP_AUTH_TOKENS env var")
-                )
-        except Exception as e:
-            print(f"    Error: {e}")
+def cmd_remove_membership(args):
+    """Remove a user from a workspace."""
+    with get_db() as cursor:
+        cursor.execute("SELECT id FROM users WHERE email = ?", (args.user,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            print(f"Error: User '{args.user}' not found.")
+            return
+        user_id = user_row[0]
 
-    print(f"\nMigration complete. {len(tokens)} tokens imported.")
-    print("NOTE: Legacy clients using hash-as-token will need new tokens via 'create'.")
-    print("You can now remove MCP_AUTH_TOKENS from environment variables.")
+        workspace_id = _get_workspace_id(cursor, args.workspace)
+        if workspace_id is None:
+            print(f"Error: Workspace '{args.workspace}' not found.")
+            return
 
+        cursor.execute(
+            "DELETE FROM workspace_members WHERE user_id = ? AND workspace_id = ?",
+            (user_id, workspace_id),
+        )
+        if cursor.rowcount > 0:
+            print(f"Removed {args.user} from workspace '{args.workspace}'.")
+        else:
+            print(f"{args.user} is not a member of workspace '{args.workspace}'.")
+
+
+def cmd_list_users(args):
+    """List all users with their workspace memberships."""
+    with get_db() as cursor:
+        cursor.execute(
+            """
+            SELECT u.id, u.email, u.display_name, u.is_org_admin,
+                   (SELECT COUNT(*) FROM tokens t WHERE t.user_id = u.id AND t.is_active = 1) AS active_tokens
+            FROM users u
+            ORDER BY u.email
+            """
+        )
+        users = _rows_to_list(cursor, cursor.fetchall())
+
+        if not users:
+            print("No users found.")
+            return
+
+        print(f"\n{'ID':<5} {'Email':<30} {'Display Name':<20} {'Admin':<7} {'Tokens':<8}")
+        print("-" * 80)
+        for u in users:
+            print(
+                f"{u['id']:<5} {u['email']:<30} {(u['display_name'] or ''):<20} "
+                f"{'Yes' if u['is_org_admin'] else 'No':<7} "
+                f"{u['active_tokens']:<8}"
+            )
+
+        # Show memberships
+        print(f"\n--- Workspace Memberships ---")
+        cursor.execute(
+            """
+            SELECT u.email, w.name, w.display_name, wm.role
+            FROM workspace_members wm
+            JOIN users u ON u.id = wm.user_id
+            JOIN workspaces w ON w.id = wm.workspace_id
+            ORDER BY u.email, w.name
+            """
+        )
+        rows = cursor.fetchall()
+        if rows:
+            current_email = None
+            for row in rows:
+                if row[0] != current_email:
+                    current_email = row[0]
+                    print(f"\n  {current_email}:")
+                print(f"    {row[1]} ({row[2]}) — {row[3]}")
+        else:
+            print("  No memberships found.")
+
+
+# ==========================================================================
+# CLI Entry Point
+# ==========================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Meeting Intelligence Token Manager")
+    parser = argparse.ArgumentParser(
+        description="Meeting Intelligence Token Manager (Control Database)",
+    )
     sub = parser.add_subparsers(dest="command")
 
     # create
-    p_create = sub.add_parser("create", help="Create a new client token")
-    p_create.add_argument("--client", required=True, help="Client name")
-    p_create.add_argument("--email", required=True, help="Client email")
+    p_create = sub.add_parser("create", help="Create token + user + workspace membership")
+    p_create.add_argument("--user", required=True, help="User email address")
+    p_create.add_argument("--workspace", required=True, help="Workspace name (slug)")
+    p_create.add_argument("--role", required=True, choices=["viewer", "member", "chair"],
+                          help="Role in workspace")
     p_create.add_argument("--expires", type=int, help="Expiry in days (default: never)")
     p_create.add_argument("--notes", help="Admin notes")
 
@@ -276,14 +353,20 @@ def main():
     p_revoke = sub.add_parser("revoke", help="Revoke a token")
     p_revoke.add_argument("--token-id", type=int, required=True)
 
-    # rotate
-    p_rotate = sub.add_parser("rotate", help="Revoke old token and create new one")
-    p_rotate.add_argument("--token-id", type=int, required=True)
-    p_rotate.add_argument("--expires", type=int, help="Expiry in days for new token")
+    # add-membership
+    p_add = sub.add_parser("add-membership", help="Add user to workspace")
+    p_add.add_argument("--user", required=True, help="User email address")
+    p_add.add_argument("--workspace", required=True, help="Workspace name (slug)")
+    p_add.add_argument("--role", required=True, choices=["viewer", "member", "chair"],
+                       help="Role in workspace")
 
-    # migrate
-    p_migrate = sub.add_parser("migrate", help="Migrate from MCP_AUTH_TOKENS env var")
-    p_migrate.add_argument("--json", help="JSON string if not in env var")
+    # remove-membership
+    p_rm = sub.add_parser("remove-membership", help="Remove user from workspace")
+    p_rm.add_argument("--user", required=True, help="User email address")
+    p_rm.add_argument("--workspace", required=True, help="Workspace name (slug)")
+
+    # list-users
+    sub.add_parser("list-users", help="List all users with memberships")
 
     args = parser.parse_args()
     if not args.command:
@@ -294,8 +377,9 @@ def main():
         "create": cmd_create,
         "list": cmd_list,
         "revoke": cmd_revoke,
-        "rotate": cmd_rotate,
-        "migrate": cmd_migrate,
+        "add-membership": cmd_add_membership,
+        "remove-membership": cmd_remove_membership,
+        "list-users": cmd_list_users,
     }
     commands[args.command](args)
 

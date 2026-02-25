@@ -1,15 +1,18 @@
 """Meeting Intelligence - REST API (Web UI)"""
 
 import hashlib
-from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 from .schemas import StatusUpdate
 
-from .database import get_db, validate_client_token
+from . import database as _db_module
+from .database import _get_engine, call_with_retry, validate_client_token, validate_token_from_control_db
+from .dependencies import authenticate_and_store, resolve_workspace
+from .workspace_context import WorkspaceContext
 from .tools import meetings, actions, decisions
+from .audit import audit_data_operation
 from fastapi_azure_auth import SingleTenantAzureAuthorizationCodeBearer
 from .config import get_settings
 from .logging_config import get_logger
@@ -40,10 +43,15 @@ async def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
-        # Look up user from database-backed token store
         token_hash = hashlib.sha256(token.encode()).hexdigest()
+        # Try control DB first when configured
+        if settings.control_db_name and _db_module.engine_registry:
+            result = validate_token_from_control_db(token_hash)
+            if result and result.get("user_email"):
+                return result["user_email"]
+        # Fallback: legacy workspace DB ClientToken table
         result = validate_client_token(token_hash)
-        if result and not result.get("error"):
+        if result and not result.get("error") and result.get("client_email"):
             return result["client_email"]
 
     # 2. Azure Entra ID Token (for React Users)
@@ -80,9 +88,6 @@ async def get_current_user(request: Request):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Whitelist Check
-    allowed_users = settings.get_allowed_users_list()
-    
     if not user_email:
         logger.warning("Auth failed: no email in token payload")
         raise HTTPException(
@@ -90,12 +95,17 @@ async def get_current_user(request: Request):
             detail="Token missing email/upn claim"
         )
 
-    if user_email.lower() not in allowed_users:
-         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail=f"Access denied for user: {user_email}"
-        )
-    
+    # Whitelist Check — only in legacy mode (no control DB).
+    # In workspace mode, access is controlled by control DB memberships
+    # (resolve_workspace raises 403 if user has no workspace memberships).
+    if not settings.control_db_name or not _db_module.engine_registry:
+        allowed_users = settings.get_allowed_users_list()
+        if user_email.lower() not in allowed_users:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied for user: {user_email}"
+            )
+
     return user_email
 
 
@@ -125,6 +135,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _get_engine_for_ctx(ctx: WorkspaceContext):
+    """Get the SQLAlchemy engine for the active workspace."""
+    if _db_module.engine_registry:
+        return _db_module.engine_registry.get_engine(ctx.db_name)
+    return _get_engine()
+
+
 # ============================================================================
 # MCP SSE ENDPOINT (For Claude.ai)
 # ============================================================================
@@ -137,16 +155,57 @@ app.add_middleware(
 # REST ENDPOINTS (Web UI)
 # ============================================================================
 
+@app.get("/api/me")
+async def get_me(
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Return authenticated user's profile, workspace memberships, and permissions."""
+    logger.info(
+        "/api/me resolved: email=%s org_admin=%s role=%s ws=%s chair_or_admin=%s",
+        ctx.user_email, ctx.is_org_admin, ctx.active.role,
+        ctx.active.workspace_name, ctx.is_chair_or_admin(),
+    )
+    return {
+        "email": ctx.user_email,
+        "is_org_admin": ctx.is_org_admin,
+        "active_workspace": {
+            "id": ctx.active.workspace_id,
+            "name": ctx.active.workspace_name,
+            "display_name": ctx.active.workspace_display_name,
+            "role": ctx.active.role,
+            "is_archived": ctx.active.is_archived,
+        },
+        "permissions": {
+            "can_write": ctx.can_write(),
+            "is_chair_or_admin": ctx.is_chair_or_admin(),
+        },
+        "workspaces": [
+            {
+                "id": m.workspace_id,
+                "name": m.workspace_name,
+                "display_name": m.workspace_display_name,
+                "role": m.role,
+                "is_default": m.is_default,
+                "is_archived": m.is_archived,
+            }
+            for m in ctx.memberships
+        ],
+    }
+
+
 @app.get("/api/meetings")
 async def list_meetings_endpoint(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     days_back: int = Query(30, ge=1),
-    user: str = Depends(get_current_user)
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """List meetings with pagination."""
     logger.info("List meetings", extra={"user": user, "limit": limit, "days_back": days_back})
-    result = meetings.list_meetings(limit=limit, days_back=days_back)
+    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.list_meetings, ctx,
+                             limit=limit, days_back=days_back)
     if result.get("error"):
         logger.error("List meetings failed", extra={"code": result.get("code"), "message": result.get("message")})
         raise HTTPException(status_code=400, detail=result["message"])
@@ -158,47 +217,30 @@ async def list_meetings_endpoint(
 async def search_meetings_endpoint(
     query: str = Query(..., min_length=2),
     limit: int = Query(10, ge=1, le=50),
-    user: str = Depends(get_current_user)
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Search meetings by keyword."""
-    result = meetings.search_meetings(query=query, limit=limit)
+    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.search_meetings, ctx,
+                             query=query, limit=limit)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
 
 @app.get("/api/meetings/{meeting_id}")
-async def get_meeting_endpoint(meeting_id: int, user: str = Depends(get_current_user)):
+async def get_meeting_endpoint(
+    meeting_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Get meeting details including linked actions and decisions."""
-    result = meetings.get_meeting(meeting_id)
+    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.get_meeting_detail, ctx,
+                             meeting_id=meeting_id)
     if result.get("error"):
         if result["code"] == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
-
-    try:
-        with get_db() as cursor:
-            cursor.execute("""
-                SELECT DecisionId, DecisionText, Context
-                FROM Decision WHERE MeetingId = ?
-            """, (meeting_id,))
-            result["decisions"] = [
-                {"id": r[0], "text": r[1], "context": r[2]}
-                for r in cursor.fetchall()
-            ]
-
-            cursor.execute("""
-                SELECT ActionId, ActionText, Owner, DueDate, Status
-                FROM Action WHERE MeetingId = ?
-            """, (meeting_id,))
-            result["actions"] = [
-                {"id": r[0], "text": r[1], "owner": r[2],
-                 "due_date": r[3].isoformat() if r[3] else None, "status": r[4]}
-                for r in cursor.fetchall()
-            ]
-    except Exception:
-        pass
-
     return result
 
 
@@ -209,33 +251,39 @@ async def list_actions_endpoint(
     meeting_id: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: str = Depends(get_current_user)
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """List actions with filters."""
-    result = actions.list_actions(
-        status=status,
-        owner=owner,
-        meeting_id=meeting_id,
-        limit=limit
-    )
+    result = call_with_retry(_get_engine_for_ctx(ctx), actions.list_actions, ctx,
+                             status=status, owner=owner,
+                             meeting_id=meeting_id, limit=limit)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
 
 @app.get("/api/actions/owners")
-async def list_action_owners_endpoint(user: str = Depends(get_current_user)):
+async def list_action_owners_endpoint(
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Get distinct action owners for filter dropdown."""
-    result = actions.get_distinct_owners()
+    result = call_with_retry(_get_engine_for_ctx(ctx), actions.get_distinct_owners, ctx)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
 
 @app.get("/api/actions/{action_id}")
-async def get_action_endpoint(action_id: int, user: str = Depends(get_current_user)):
+async def get_action_endpoint(
+    action_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Get action details."""
-    result = actions.get_action(action_id)
+    result = call_with_retry(_get_engine_for_ctx(ctx), actions.get_action, ctx,
+                             action_id=action_id)
     if result.get("error"):
         if result["code"] == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
@@ -244,24 +292,21 @@ async def get_action_endpoint(action_id: int, user: str = Depends(get_current_us
 
 
 @app.patch("/api/actions/{action_id}/status")
-async def update_action_status_endpoint(action_id: int, update: StatusUpdate, user: str = Depends(get_current_user)):
+async def update_action_status_endpoint(
+    action_id: int,
+    update: StatusUpdate,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Update action status."""
-    user_email = user # Use the authenticated user's email
-    
+    eng = _get_engine_for_ctx(ctx)
+
     if update.status == "Complete":
-        result = actions.complete_action(action_id, user_email)
+        result = call_with_retry(eng, actions.complete_action, ctx, action_id=action_id)
     elif update.status == "Parked":
-        result = actions.park_action(action_id, user_email)
+        result = call_with_retry(eng, actions.park_action, ctx, action_id=action_id)
     elif update.status == "Open":
-        try:
-            with get_db() as cursor:
-                cursor.execute("""
-                    UPDATE Action SET Status = 'Open', UpdatedAt = ?, UpdatedBy = ?
-                    WHERE ActionId = ?
-                """, (datetime.utcnow(), user_email, action_id))
-            result = actions.get_action(action_id)
-        except Exception as e:
-            result = {"error": True, "code": "DATABASE_ERROR", "message": str(e)}
+        result = call_with_retry(eng, actions.reopen_action, ctx, action_id=action_id)
     else:
         raise HTTPException(
             status_code=400,
@@ -271,6 +316,7 @@ async def update_action_status_endpoint(action_id: int, update: StatusUpdate, us
         if result["code"] == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "update", "action", action_id, auth_method="web")
     return result
 
 
@@ -279,19 +325,26 @@ async def list_decisions_endpoint(
     meeting_id: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: str = Depends(get_current_user)
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """List decisions."""
-    result = decisions.list_decisions(meeting_id=meeting_id, limit=limit)
+    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.list_decisions, ctx,
+                             meeting_id=meeting_id, limit=limit)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
 
 @app.get("/api/decisions/{decision_id}")
-async def get_decision_endpoint(decision_id: int, user: str = Depends(get_current_user)):
+async def get_decision_endpoint(
+    decision_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Get decision details."""
-    result = decisions.get_decision(decision_id)
+    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.get_decision, ctx,
+                             decision_id=decision_id)
     if result.get("error"):
         if result.get("code") == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
@@ -300,61 +353,54 @@ async def get_decision_endpoint(decision_id: int, user: str = Depends(get_curren
 
 
 @app.delete("/api/meetings/{meeting_id}")
-async def delete_meeting_endpoint(meeting_id: int, user: str = Depends(get_current_user)):
+async def delete_meeting_endpoint(
+    meeting_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Delete a meeting and its associated decisions and actions."""
-    try:
-        with get_db() as cursor:
-            # Check if meeting exists
-            cursor.execute("SELECT MeetingId FROM Meeting WHERE MeetingId = ?", (meeting_id,))
-            if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"Meeting {meeting_id} not found")
-
-            # Delete in order due to foreign keys
-            cursor.execute("DELETE FROM Decision WHERE MeetingId = ?", (meeting_id,))
-            cursor.execute("DELETE FROM Action WHERE MeetingId = ?", (meeting_id,))
-            cursor.execute("DELETE FROM Meeting WHERE MeetingId = ?", (meeting_id,))
-
-        return {"success": True, "message": f"Meeting {meeting_id} deleted"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.delete_meeting, ctx,
+                             meeting_id=meeting_id)
+    if result.get("error"):
+        if result.get("code") == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "delete", "meeting", meeting_id, auth_method="web")
+    return result
 
 
 @app.delete("/api/actions/{action_id}")
-async def delete_action_endpoint(action_id: int, user: str = Depends(get_current_user)):
+async def delete_action_endpoint(
+    action_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Delete an action."""
-    try:
-        with get_db() as cursor:
-            cursor.execute("SELECT ActionId FROM Action WHERE ActionId = ?", (action_id,))
-            if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"Action {action_id} not found")
-
-            cursor.execute("DELETE FROM Action WHERE ActionId = ?", (action_id,))
-
-        return {"success": True, "message": f"Action {action_id} deleted"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    result = call_with_retry(_get_engine_for_ctx(ctx), actions.delete_action, ctx,
+                             action_id=action_id)
+    if result.get("error"):
+        if result.get("code") == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "delete", "action", action_id, auth_method="web")
+    return result
 
 
 @app.delete("/api/decisions/{decision_id}")
-async def delete_decision_endpoint(decision_id: int, user: str = Depends(get_current_user)):
+async def delete_decision_endpoint(
+    decision_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
     """Delete a decision."""
-    try:
-        with get_db() as cursor:
-            cursor.execute("SELECT DecisionId FROM Decision WHERE DecisionId = ?", (decision_id,))
-            if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"Decision {decision_id} not found")
-
-            cursor.execute("DELETE FROM Decision WHERE DecisionId = ?", (decision_id,))
-
-        return {"success": True, "message": f"Decision {decision_id} deleted"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.delete_decision, ctx,
+                             decision_id=decision_id)
+    if result.get("error"):
+        if result.get("code") == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "delete", "decision", decision_id, auth_method="web")
+    return result
 
 
 @app.get("/api/schema")

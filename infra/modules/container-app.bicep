@@ -54,6 +54,9 @@ param appInsightsConnectionStringSecretUri string
 @description('Key Vault secret URI for JWT secret')
 param jwtSecretUri string
 
+@description('Control database name (empty = workspace features disabled)')
+param controlDbName string = ''
+
 @description('Log Analytics workspace ID for Container Apps Environment')
 param logAnalyticsWorkspaceId string
 
@@ -126,6 +129,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             { name: 'AZURE_SQL_SERVER', value: sqlServerFqdn }
             { name: 'AZURE_SQL_DATABASE', value: sqlDatabaseName }
+            { name: 'CONTROL_DB_NAME', value: controlDbName }
             { name: 'API_AZURE_TENANT_ID', value: azureTenantId }
             { name: 'API_AZURE_CLIENT_ID', value: azureClientId }
             { name: 'ALLOWED_USERS', value: allowedUsers }
