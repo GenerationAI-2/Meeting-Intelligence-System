@@ -15,6 +15,10 @@ dist/
 build/
 *.egg-info/
 
+# Bicep ARM template compilation outputs
+infra/*.json
+infra/modules/*.json
+
 # IDE
 .vscode/
 .idea/
