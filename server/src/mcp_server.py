@@ -60,6 +60,11 @@ _mcp_workspace_ctx_var: contextvars.ContextVar[Optional[WorkspaceContext]] = con
     "mcp_workspace_ctx", default=None
 )
 
+# Workspace override cache — persists switch_workspace preference across requests.
+# Keyed by user email, value is workspace name. Checked by _resolve_ctx before
+# falling back to the user's default workspace from the auth middleware cache.
+_workspace_override: dict[str, str] = {}  # {email: workspace_name}
+
 
 def set_mcp_workspace_context(ctx: WorkspaceContext) -> None:
     """Set the resolved workspace context for the current MCP request."""
@@ -92,18 +97,23 @@ def _resolve_ctx(workspace_override: str | None = None) -> WorkspaceContext | di
         # Genuine legacy/stdio mode: no control DB configured
         ctx = make_legacy_context(get_mcp_user())
 
-    if workspace_override:
-        # Find the requested workspace in user's memberships
+    # Apply workspace override: explicit param > cached switch > default
+    effective_override = workspace_override or _workspace_override.get(ctx.user_email)
+    if effective_override:
         for m in ctx.memberships:
-            if m.workspace_name == workspace_override or str(m.workspace_id) == workspace_override:
+            if m.workspace_name == effective_override or str(m.workspace_id) == effective_override:
                 return WorkspaceContext(
                     user_email=ctx.user_email,
                     is_org_admin=ctx.is_org_admin,
                     memberships=ctx.memberships,
                     active=m,
                 )
-        return {"error": True, "code": "FORBIDDEN",
-                "message": f"Not a member of workspace '{workspace_override}'"}
+        # Only error if explicitly requested (not from stale cache)
+        if workspace_override:
+            return {"error": True, "code": "FORBIDDEN",
+                    "message": f"Not a member of workspace '{workspace_override}'"}
+        # Stale override (e.g. removed from workspace) — clear it and use default
+        _workspace_override.pop(ctx.user_email, None)
 
     return ctx
 
@@ -486,7 +496,8 @@ def switch_workspace(workspace: str) -> dict:
     ctx = _resolve_ctx(workspace)
     if isinstance(ctx, dict):
         return ctx
-    # Update the contextvar so subsequent calls in this session use the new workspace
+    # Persist workspace preference so it carries across stateless HTTP requests
+    _workspace_override[ctx.user_email] = ctx.active.workspace_name
     set_mcp_workspace_context(ctx)
     return {
         "message": f"Switched to workspace '{ctx.active.workspace_display_name}'",
