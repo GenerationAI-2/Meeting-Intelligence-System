@@ -10,7 +10,8 @@ from fastapi import Depends, Header, HTTPException, Request
 from typing import Optional, Generator
 import pyodbc
 
-from .database import engine_registry, get_db_for, get_control_db, _get_engine
+from . import database as _db_module
+from .database import get_db_for, get_control_db, _get_engine
 from .workspace_context import WorkspaceContext, WorkspaceMembership, make_legacy_context
 from .config import get_settings
 from .logging_config import get_logger
@@ -124,8 +125,10 @@ async def resolve_workspace(
     settings = get_settings()
 
     # Legacy mode: no control database configured
-    if not settings.control_db_name or not engine_registry:
+    if not settings.control_db_name or not _db_module.engine_registry:
         user_email = getattr(request.state, 'user_email', 'system@generationai.co.nz')
+        logger.warning("resolve_workspace: LEGACY MODE (control_db_name=%s, engine_registry=%s)",
+                       settings.control_db_name, bool(_db_module.engine_registry))
         return make_legacy_context(user_email)
 
     # Workspace mode: query control DB for memberships
@@ -137,7 +140,8 @@ async def resolve_workspace(
         with get_control_db() as cursor:
             is_org_admin, default_ws_id, memberships = _get_user_memberships(cursor, user_email)
     except Exception as e:
-        logger.warning("Failed to query control DB for workspace resolution: %s", e)
+        logger.warning("resolve_workspace: FALLBACK TO LEGACY — control DB error: %s: %s",
+                       type(e).__name__, e)
         return make_legacy_context(user_email)
 
     if not memberships:
@@ -159,8 +163,8 @@ def get_workspace_db(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ) -> Generator[pyodbc.Cursor, None, None]:
     """Yield a pyodbc cursor connected to the active workspace database."""
-    if engine_registry:
-        eng = engine_registry.get_engine(ctx.db_name)
+    if _db_module.engine_registry:
+        eng = _db_module.engine_registry.get_engine(ctx.db_name)
     else:
         eng = _get_engine()
     with get_db_for(eng) as cursor:

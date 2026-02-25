@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 from .schemas import StatusUpdate
 
-from .database import engine_registry, _get_engine, call_with_retry, validate_client_token, validate_token_from_control_db
+from . import database as _db_module
+from .database import _get_engine, call_with_retry, validate_client_token, validate_token_from_control_db
 from .dependencies import authenticate_and_store, resolve_workspace
 from .workspace_context import WorkspaceContext
 from .tools import meetings, actions, decisions
@@ -43,7 +44,7 @@ async def get_current_user(request: Request):
         token = auth_header.split(" ")[1]
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         # Try control DB first when configured
-        if settings.control_db_name and engine_registry:
+        if settings.control_db_name and _db_module.engine_registry:
             result = validate_token_from_control_db(token_hash)
             if result and result.get("user_email"):
                 return result["user_email"]
@@ -134,8 +135,8 @@ app.add_middleware(
 
 def _get_engine_for_ctx(ctx: WorkspaceContext):
     """Get the SQLAlchemy engine for the active workspace."""
-    if engine_registry:
-        return engine_registry.get_engine(ctx.db_name)
+    if _db_module.engine_registry:
+        return _db_module.engine_registry.get_engine(ctx.db_name)
     return _get_engine()
 
 
@@ -157,6 +158,11 @@ async def get_me(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Return authenticated user's profile, workspace memberships, and permissions."""
+    logger.info(
+        "/api/me resolved: email=%s org_admin=%s role=%s ws=%s chair_or_admin=%s",
+        ctx.user_email, ctx.is_org_admin, ctx.active.role,
+        ctx.active.workspace_name, ctx.is_chair_or_admin(),
+    )
     return {
         "email": ctx.user_email,
         "is_org_admin": ctx.is_org_admin,

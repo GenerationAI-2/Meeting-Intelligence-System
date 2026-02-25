@@ -8,7 +8,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import ValidationError
 from .workspace_context import WorkspaceContext, make_legacy_context
-from .database import engine_registry, _get_engine, call_with_retry, get_db_for
+from . import database as _db_module
+from .database import _get_engine, call_with_retry, get_db_for
 from .tools import meetings, actions, decisions, workspaces
 from .schemas import (
     MeetingCreate, MeetingUpdate, MeetingId, MeetingSearch, MeetingListFilter,
@@ -103,8 +104,8 @@ def _mcp_tool_call(func, ctx, **kwargs):
     """Execute a tool function with retry and cursor management."""
     if isinstance(ctx, dict) and ctx.get("error"):
         return ctx  # Workspace resolution failed
-    if engine_registry:
-        eng = engine_registry.get_engine(ctx.db_name)
+    if _db_module.engine_registry:
+        eng = _db_module.engine_registry.get_engine(ctx.db_name)
     else:
         eng = _get_engine()
     return call_with_retry(eng, func, ctx, **kwargs)

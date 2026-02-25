@@ -15,7 +15,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from .audit import log_audit
 from .config import get_settings
-from .database import engine_registry, get_control_db, get_db_for
+from . import database as _db_module
+from .database import get_control_db, get_db_for
 from .dependencies import authenticate_and_store, resolve_workspace
 from .logging_config import get_logger
 from .permissions import check_permission
@@ -188,7 +189,7 @@ def _run_workspace_schema(db_name: str) -> None:
     with open(schema_path, "r") as f:
         schema_sql = f.read()
 
-    eng = engine_registry.get_engine(db_name)
+    eng = _db_module.engine_registry.get_engine(db_name)
     with get_db_for(eng) as cursor:
         for statement in schema_sql.split(";"):
             statement = statement.strip()
