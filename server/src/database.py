@@ -558,6 +558,7 @@ def validate_token_from_control_db(token_hash: str) -> dict | None:
                 FROM workspace_members wm
                 JOIN workspaces w ON w.id = wm.workspace_id
                 WHERE wm.user_id = ?
+                  AND w.is_archived = 0
                 ORDER BY w.is_default DESC, w.name
                 """,
                 (user_id,),

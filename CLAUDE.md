@@ -135,6 +135,7 @@ web/src/
 | `switch_workspace` doesn't persist across stateless HTTP requests | Streamable HTTP is stateless — each POST is a new request, so `set_mcp_workspace_context(ctx)` using contextvars dies at request end. Fix: in-memory `_workspace_override` dict in `mcp_server.py` keyed by user email, checked by `_resolve_ctx` before falling back to default. Stale overrides (e.g., removed from workspace) auto-clear. | 2026-02-26 |
 | Archiving workspace while UI has it selected causes 403 on all API calls | Web UI sends `X-Workspace-ID` header from stored state. If that workspace is archived, `_get_user_memberships()` excludes it (`AND w.is_archived = 0`), so `_resolve_active_workspace` raises 403 "Not a member". Fix: user must clear browser storage or hard refresh to reset to default workspace. Could be improved with server-side fallback. | 2026-02-26 |
 | OAuth identity has no workspace memberships | Claude.ai OAuth flow creates identity `oauth:<client_id>` which doesn't match any workspace member email. Result: `_get_user_memberships()` returns empty → 403. Use token auth (SSE with token param) instead of OAuth for MCP connections. | 2026-02-26 |
+| Deleting a workspace database breaks legacy token fallback | `AZURE_SQL_DATABASE` points to the "general" workspace DB which has `ClientToken`/`OAuthClient` tables from deploy. If that DB is deleted (e.g., archiving unused General workspace), `validate_client_token()` crashes with `Invalid object name 'ClientToken'` → 500 on all auth. Fix: create `ClientToken`+`OAuthClient` tables in all workspace DBs, or point `AZURE_SQL_DATABASE` to a DB that has them. Long-term: remove legacy fallback when all envs use control DB. | 2026-02-26 |
 
 ---
 
@@ -218,6 +219,15 @@ web/src/
 - [ ] Log Analytics workspaces created per environment (could consolidate)
 - [ ] Legacy `meeting-intelligence-v2-rg` resource group still exists (can delete)
 - [ ] OAuth 2.1 auth codes stored in-memory — lost on container restart (clients persist to DB via OAuthClient table, but pending auth codes do not)
+- [ ] Remove legacy `validate_client_token` fallback — all new envs use control DB; legacy path is dead code that caused the `mi-genai` 500 incident
+
+## Ideas Bucket
+
+- [ ] **Self-service MCP token generation in web UI** — User logs in via Azure AD, clicks "Generate MCP Token" on profile/settings page, sees plaintext once with copy button. Eliminates insecure token distribution via email/Teams. ~2-3 hours. Needs: `POST/GET/DELETE /api/profile/token(s)` endpoints + React settings page.
+- [ ] **ChatGPT MCP support for workspace mode** — OAuth 2.1 flow creates `oauth:<client_id>` identity with no workspace memberships → 403. Need to map OAuth clients to workspace members (e.g., link OAuth client to a user email during DCR, or auto-create membership on first auth). Required for Eva/ChatGPT users.
+- [ ] **Workspace switch should re-fetch page data** — Changing workspace in the picker doesn't trigger a data refresh. User has to hard refresh to see the new workspace's content. Fix: listen for workspace change in React context and re-trigger data fetches.
+- [ ] **Auto-refresh / polling for web UI** — Content goes stale when changes are made via MCP or by other users. Add periodic polling (e.g., every 30-60s) or optimistic refresh on tab focus. Keeps actions, meetings, decisions up to date without manual refresh.
+- [ ] **Email notifications for overdue actions** — flagged as known issue since Phase 1
 
 ---
 
