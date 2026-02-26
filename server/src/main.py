@@ -31,7 +31,6 @@ def run_http():
     from starlette.responses import FileResponse, Response
     from starlette.middleware.cors import CORSMiddleware
 
-    from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse as StarletteJSONResponse
 
     from .api import app as api_app  # REST API endpoints
@@ -223,13 +222,21 @@ def run_http():
     app = FastAPI(title="Meeting Intelligence", lifespan=lifespan)
 
     # Payload size limit (1MB) — reject oversized requests before processing
+    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking SSE/streaming
     MAX_PAYLOAD_BYTES = 1 * 1024 * 1024
 
-    class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):
-            content_length = request.headers.get('content-length')
+    class PayloadSizeLimitMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+            headers = dict(scope.get("headers", []))
+            content_length = headers.get(b"content-length")
             if content_length and int(content_length) > MAX_PAYLOAD_BYTES:
-                return StarletteJSONResponse(
+                response = StarletteJSONResponse(
                     status_code=413,
                     content={
                         "error": True,
@@ -237,14 +244,17 @@ def run_http():
                         "message": f"Payload too large. Maximum size is {MAX_PAYLOAD_BYTES // 1024}KB."
                     }
                 )
-            return await call_next(request)
+                await response(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
 
     app.add_middleware(PayloadSizeLimitMiddleware)
 
     # Rate limiting middleware — tiered per endpoint category
     # MCP: 120/min per-token (rapid tool calls), OAuth: 20/min per-IP,
     # API: 60/min per-IP, health/well-known: exempt
-    class RateLimitMiddleware(BaseHTTPMiddleware):
+    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking SSE/streaming
+    class RateLimitMiddleware:
         TIERS = {
             "mcp":   (120, 60),  # 120 req/min — MCP tool calls
             "oauth": (20, 60),   # 20 req/min — auth endpoints
@@ -253,7 +263,7 @@ def run_http():
         EXEMPT_PREFIXES = ("/health", "/.well-known")
 
         def __init__(self, app):
-            super().__init__(app)
+            self.app = app
             self._windows: dict[str, list[float]] = {}
             self._last_cleanup = _time.monotonic()
             self._lock = asyncio.Lock()
@@ -269,30 +279,40 @@ def run_http():
                 return "api"
             return None
 
-        def _get_client_key(self, request, tier: str) -> str:
+        def _get_client_key(self, scope, headers_dict: dict, tier: str) -> str:
             if tier == "mcp":
-                token = (
-                    request.query_params.get("token")
-                    or request.headers.get("X-API-Key")
-                    or ""
-                )
-                auth_header = request.headers.get("Authorization", "")
+                # Extract token from query string
+                from urllib.parse import parse_qs
+                qs = parse_qs(scope.get("query_string", b"").decode())
+                token = (qs.get("token", [""])[0]
+                         or headers_dict.get(b"x-api-key", b"").decode()
+                         or "")
+                auth_header = headers_dict.get(b"authorization", b"").decode()
                 if not token and auth_header.startswith("Bearer "):
                     token = auth_header[7:]
-                if not token and request.url.path.startswith("/mcp/"):
-                    token = request.url.path[5:]
+                path = scope.get("path", "")
+                if not token and path.startswith("/mcp/"):
+                    token = path[5:]
                 if token:
                     return f"mcp:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
-            client_ip = request.client.host if request.client else "unknown"
+            client = scope.get("client")
+            client_ip = client[0] if client else "unknown"
             return f"{tier}:{client_ip}"
 
-        async def dispatch(self, request, call_next):
-            tier = self._classify(request.url.path)
-            if tier is None:
-                return await call_next(request)
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
 
+            path = scope.get("path", "")
+            tier = self._classify(path)
+            if tier is None:
+                await self.app(scope, receive, send)
+                return
+
+            headers_dict = dict(scope.get("headers", []))
             max_requests, window_seconds = self.TIERS[tier]
-            client_key = self._get_client_key(request, tier)
+            client_key = self._get_client_key(scope, headers_dict, tier)
             now = _time.monotonic()
 
             async with self._lock:
@@ -307,7 +327,7 @@ def run_http():
                 if len(timestamps) >= max_requests:
                     retry_after = int(timestamps[0] - cutoff) + 1
                     logger.warning("Rate limit hit: %s (%d/%d in %ds)", client_key, len(timestamps), max_requests, window_seconds)
-                    return StarletteJSONResponse(
+                    response = StarletteJSONResponse(
                         status_code=429,
                         content={
                             "error": True,
@@ -320,6 +340,8 @@ def run_http():
                             "X-RateLimit-Remaining": "0",
                         }
                     )
+                    await response(scope, receive, send)
+                    return
 
                 timestamps.append(now)
                 remaining = max_requests - len(timestamps)
@@ -332,31 +354,54 @@ def run_http():
                     for k in stale:
                         del self._windows[k]
 
-            response = await call_next(request)
-            response.headers["X-RateLimit-Limit"] = str(max_requests)
-            response.headers["X-RateLimit-Remaining"] = str(remaining)
-            return response
+            # Inject rate limit headers into response
+            async def send_with_rate_headers(message):
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.append((b"x-ratelimit-limit", str(max_requests).encode()))
+                    headers.append((b"x-ratelimit-remaining", str(remaining).encode()))
+                    message["headers"] = headers
+                await send(message)
+
+            await self.app(scope, receive, send_with_rate_headers)
 
     app.add_middleware(RateLimitMiddleware)
 
     # Security headers middleware
-    class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):
-            response = await call_next(request)
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Frame-Options"] = "DENY"
-            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; "
-                "script-src 'self'; "
-                "style-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data:; "
-                "font-src 'self'; "
-                "connect-src 'self' https://login.microsoftonline.com https://*.microsoftonline.com; "
-                "frame-ancestors 'none'"
-            )
-            return response
+    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking SSE/streaming
+    _SECURITY_HEADERS = [
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"DENY"),
+        (b"referrer-policy", b"strict-origin-when-cross-origin"),
+        (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
+        (b"content-security-policy", (
+            b"default-src 'self'; "
+            b"script-src 'self'; "
+            b"style-src 'self' 'unsafe-inline'; "
+            b"img-src 'self' data:; "
+            b"font-src 'self'; "
+            b"connect-src 'self' https://login.microsoftonline.com https://*.microsoftonline.com; "
+            b"frame-ancestors 'none'"
+        )),
+    ]
+
+    class SecurityHeadersMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            async def send_with_security_headers(message):
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.extend(_SECURITY_HEADERS)
+                    message["headers"] = headers
+                await send(message)
+
+            await self.app(scope, receive, send_with_security_headers)
 
     app.add_middleware(SecurityHeadersMiddleware)
 
