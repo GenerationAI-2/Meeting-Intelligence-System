@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { decisionsApi, meetingsApi } from '../services/api';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function DecisionsList() {
+    const { workspaceVersion } = useWorkspace();
     const [decisions, setDecisions] = useState([]);
     const [meetings, setMeetings] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -14,11 +16,11 @@ function DecisionsList() {
 
     useEffect(() => {
         loadMeetings();
-    }, []);
+    }, [workspaceVersion]);
 
     useEffect(() => {
         loadDecisions();
-    }, [page, meetingFilter]);
+    }, [page, meetingFilter, workspaceVersion]);
 
     async function loadMeetings() {
         try {

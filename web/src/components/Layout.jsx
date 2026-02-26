@@ -13,9 +13,10 @@ function Layout({ children }) {
         { path: '/meetings', label: 'Meetings' },
         { path: '/actions', label: 'Actions' },
         { path: '/decisions', label: 'Decisions' },
+        { path: '/settings', label: 'Settings' },
     ];
 
-    if (permissions.is_chair_or_admin || isOrgAdmin) {
+    if (isOrgAdmin) {
         navItems.push({ path: '/admin/workspaces', label: 'Admin' });
     }
 

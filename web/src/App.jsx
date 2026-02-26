@@ -10,6 +10,7 @@ import ActionDetail from './pages/ActionDetail';
 import DecisionsList from './pages/DecisionsList';
 import DecisionDetail from './pages/DecisionDetail';
 import WorkspaceAdmin from './pages/WorkspaceAdmin';
+import Settings from './pages/Settings';
 import Login from './pages/Login';
 import { setAccessTokenProvider } from './services/api';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
@@ -87,6 +88,7 @@ function App() {
                                         <Route path="/decisions" element={<DecisionsList />} />
                                         <Route path="/decisions/:id" element={<DecisionDetail />} />
                                         <Route path="/admin/workspaces" element={<WorkspaceAdmin />} />
+                                        <Route path="/settings" element={<Settings />} />
                                     </Routes>
                                 </Layout>
                             </WorkspaceProvider>

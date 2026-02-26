@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 import { workspaceApi } from '../services/api';
 
@@ -133,12 +134,8 @@ function WorkspaceAdmin() {
         }
     }
 
-    if (!permissions.is_chair_or_admin && !isOrgAdmin) {
-        return (
-            <div className="text-center py-12">
-                <p className="text-gray-500">You don't have permission to access this page.</p>
-            </div>
-        );
+    if (!isOrgAdmin) {
+        return <Navigate to="/meetings" replace />;
     }
 
     if (loading) {

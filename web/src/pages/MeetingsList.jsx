@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { meetingsApi } from '../services/api';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function MeetingsList() {
+    const { workspaceVersion } = useWorkspace();
     const [meetings, setMeetings] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -16,7 +18,7 @@ function MeetingsList() {
         if (!isSearching) {
             loadMeetings();
         }
-    }, [page]);
+    }, [page, workspaceVersion]);
 
     async function loadMeetings() {
         try {
