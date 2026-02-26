@@ -4,7 +4,7 @@ import { actionsApi } from '../services/api';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function ActionsList() {
-    const { permissions } = useWorkspace();
+    const { permissions, workspaceVersion } = useWorkspace();
     const [actions, setActions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -19,11 +19,11 @@ function ActionsList() {
 
     useEffect(() => {
         actionsApi.owners().then(data => setOwners(data.owners || [])).catch(() => {});
-    }, []);
+    }, [workspaceVersion]);
 
     useEffect(() => {
         loadActions();
-    }, [page, statusFilter, ownerFilter]);
+    }, [page, statusFilter, ownerFilter, workspaceVersion]);
 
     async function loadActions() {
         try {

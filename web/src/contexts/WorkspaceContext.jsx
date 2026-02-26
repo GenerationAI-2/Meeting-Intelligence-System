@@ -12,6 +12,7 @@ export function WorkspaceProvider({ children }) {
     const [isOrgAdmin, setIsOrgAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [workspaceVersion, setWorkspaceVersion] = useState(0);
 
     const fetchMe = useCallback(async (workspaceId = null) => {
         try {
@@ -54,6 +55,7 @@ export function WorkspaceProvider({ children }) {
         setLoading(true);
         localStorage.setItem(STORAGE_KEY, String(workspaceId));
         await fetchMe(workspaceId);
+        setWorkspaceVersion(prev => prev + 1);
     }, [fetchMe]);
 
     const refreshWorkspaces = useCallback(async () => {
@@ -70,6 +72,7 @@ export function WorkspaceProvider({ children }) {
         error,
         switchWorkspace,
         refreshWorkspaces,
+        workspaceVersion,
     };
 
     return (
@@ -92,6 +95,7 @@ export function useWorkspace() {
             error: null,
             switchWorkspace: () => {},
             refreshWorkspaces: () => {},
+            workspaceVersion: 0,
         };
     }
     return ctx;
