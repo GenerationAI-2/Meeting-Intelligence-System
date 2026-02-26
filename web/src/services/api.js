@@ -123,6 +123,20 @@ export const decisionsApi = {
     delete: (id) => fetchApi(`/decisions/${id}`, { method: 'DELETE' }),
 };
 
+// Tokens API (self-service PAT management)
+export const tokensApi = {
+    list: () => fetchApi('/me/tokens'),
+
+    create: (data) =>
+        fetchApi('/me/tokens', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    revoke: (id) =>
+        fetchApi(`/me/tokens/${id}`, { method: 'DELETE' }),
+};
+
 // Workspace API
 export const workspaceApi = {
     me: () => fetchApi('/me'),
