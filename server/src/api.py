@@ -4,11 +4,15 @@ import hashlib
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from starlette.responses import Response
 from .schemas import StatusUpdate
 
 from . import database as _db_module
-from .database import _get_engine, call_with_retry, validate_client_token, validate_token_from_control_db
+from .database import (
+    _get_engine, call_with_retry, validate_client_token, validate_token_from_control_db,
+    create_user_token, list_user_tokens, revoke_user_token,
+)
 from .dependencies import authenticate_and_store, resolve_workspace
 from .workspace_context import WorkspaceContext
 from .tools import meetings, actions, decisions
@@ -109,6 +113,11 @@ async def get_current_user(request: Request):
     return user_email
 
 
+class TokenCreate(BaseModel):
+    client_name: str = Field(..., min_length=1, max_length=255)
+    expires_days: Optional[int] = Field(None, gt=0, le=365)
+
+
 app = FastAPI(title="Meeting Intelligence API", version="1.0.0", swagger_ui_oauth2_redirect_url="/oauth2-redirect")
 
 # Request logging middleware
@@ -193,6 +202,62 @@ async def get_me(
         ],
     }
 
+
+# ============================================================================
+# TOKEN MANAGEMENT (Self-service PAT)
+# ============================================================================
+
+@app.post("/api/me/tokens")
+async def create_token_endpoint(
+    body: TokenCreate,
+    user: str = Depends(authenticate_and_store),
+):
+    """Create a personal access token for the current user."""
+    settings = get_settings()
+    if not settings.control_db_name or not _db_module.engine_registry:
+        raise HTTPException(404, "Token management not available — workspace mode not configured")
+
+    engine = _db_module.engine_registry.get_engine(settings.control_db_name)
+    try:
+        result = create_user_token(engine, user, body.client_name, body.expires_days)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return result
+
+
+@app.get("/api/me/tokens")
+async def list_tokens_endpoint(
+    user: str = Depends(authenticate_and_store),
+):
+    """List current user's tokens (metadata only, never the hash)."""
+    settings = get_settings()
+    if not settings.control_db_name or not _db_module.engine_registry:
+        raise HTTPException(404, "Token management not available — workspace mode not configured")
+
+    engine = _db_module.engine_registry.get_engine(settings.control_db_name)
+    return list_user_tokens(engine, user)
+
+
+@app.delete("/api/me/tokens/{token_id}")
+async def revoke_token_endpoint(
+    token_id: int,
+    user: str = Depends(authenticate_and_store),
+):
+    """Revoke a personal access token."""
+    settings = get_settings()
+    if not settings.control_db_name or not _db_module.engine_registry:
+        raise HTTPException(404, "Token management not available — workspace mode not configured")
+
+    engine = _db_module.engine_registry.get_engine(settings.control_db_name)
+    revoked = revoke_user_token(engine, user, token_id)
+    if not revoked:
+        raise HTTPException(404, "Token not found or already revoked")
+    return {"success": True}
+
+
+# ============================================================================
+# MEETINGS, ACTIONS, DECISIONS
+# ============================================================================
 
 @app.get("/api/meetings")
 async def list_meetings_endpoint(

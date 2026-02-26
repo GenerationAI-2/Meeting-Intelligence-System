@@ -494,6 +494,134 @@ def list_client_tokens() -> list[dict]:
 
 
 # ============================================================================
+# USER TOKEN MANAGEMENT (Self-service PAT via web UI)
+# ============================================================================
+
+def create_user_token(
+    engine: Engine, user_email: str, client_name: str, expires_days: int | None = None
+) -> dict:
+    """Create a personal access token for a user in the control DB.
+
+    Looks up user by email, verifies they have active workspace memberships,
+    generates token, stores SHA256 hash. Returns dict with plaintext (shown once).
+
+    Raises ValueError if user not found or has no active memberships.
+    """
+    plaintext = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(plaintext.encode()).hexdigest()
+
+    expires_at = None
+    if expires_days is not None:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+
+    with get_db_for(engine) as cursor:
+        # Look up user
+        cursor.execute("SELECT id FROM users WHERE email = ?", (user_email,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            raise ValueError(
+                "You're not set up in Meeting Intelligence yet. "
+                "Ask your administrator to add you to a workspace."
+            )
+        user_id = user_row[0]
+
+        # Verify at least one active workspace membership
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM workspace_members wm
+            JOIN workspaces w ON w.id = wm.workspace_id
+            WHERE wm.user_id = ? AND w.is_archived = 0
+            """,
+            (user_id,),
+        )
+        if cursor.fetchone()[0] == 0:
+            raise ValueError(
+                "You don't have any workspace memberships. "
+                "Contact your administrator to be added to a workspace."
+            )
+
+        # Insert token
+        cursor.execute(
+            """
+            INSERT INTO tokens (token_hash, user_id, client_name, created_by, expires_at)
+            OUTPUT inserted.id, inserted.created_at
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (token_hash, user_id, client_name, user_email, expires_at),
+        )
+        row = cursor.fetchone()
+
+    return {
+        "id": row[0],
+        "token": plaintext,
+        "client_name": client_name,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "created_at": row[1].isoformat() if row[1] else None,
+    }
+
+
+def list_user_tokens(engine: Engine, user_email: str) -> dict:
+    """List tokens for a user from the control DB. Returns metadata only — never the hash.
+
+    Also returns provisioning status so the frontend can show appropriate UI.
+    """
+    with get_db_for(engine) as cursor:
+        # Check if user exists
+        cursor.execute("SELECT id FROM users WHERE email = ?", (user_email,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            return {"provisioned": False, "tokens": [], "count": 0}
+
+        user_id = user_row[0]
+
+        # Check memberships
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM workspace_members wm
+            JOIN workspaces w ON w.id = wm.workspace_id
+            WHERE wm.user_id = ? AND w.is_archived = 0
+            """,
+            (user_id,),
+        )
+        has_memberships = cursor.fetchone()[0] > 0
+
+        # Get tokens
+        cursor.execute(
+            """
+            SELECT id, client_name, is_active, created_at, expires_at, revoked_at, notes
+            FROM tokens
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        )
+        tokens = rows_to_list(cursor, cursor.fetchall())
+
+    return {
+        "provisioned": True,
+        "has_memberships": has_memberships,
+        "tokens": tokens,
+        "count": len(tokens),
+    }
+
+
+def revoke_user_token(engine: Engine, user_email: str, token_id: int) -> bool:
+    """Revoke a user's own token. Returns True if revoked, False if not found/not owned."""
+    with get_db_for(engine) as cursor:
+        cursor.execute(
+            """
+            UPDATE tokens
+            SET is_active = 0, revoked_at = SYSUTCDATETIME()
+            WHERE id = ?
+              AND user_id = (SELECT id FROM users WHERE email = ?)
+              AND is_active = 1
+            """,
+            (token_id, user_email),
+        )
+        return cursor.rowcount > 0
+
+
+# ============================================================================
 # CONTROL DB TOKEN VALIDATION
 # ============================================================================
 
