@@ -125,11 +125,16 @@ async def resolve_workspace(
     settings = get_settings()
 
     # Legacy mode: no control database configured
-    if not settings.control_db_name or not _db_module.engine_registry:
+    if not settings.control_db_name:
         user_email = getattr(request.state, 'user_email', 'system@generationai.co.nz')
-        logger.warning("resolve_workspace: LEGACY MODE (control_db_name=%s, engine_registry=%s)",
-                       settings.control_db_name, bool(_db_module.engine_registry))
+        logger.warning("resolve_workspace: LEGACY MODE (no control_db_name)")
         return make_legacy_context(user_email)
+
+    # Fail closed: workspace mode configured but engine not ready
+    if not _db_module.engine_registry:
+        logger.error("resolve_workspace: engine_registry not initialized but control_db_name='%s' is set — failing closed",
+                     settings.control_db_name)
+        raise HTTPException(503, "Service temporarily unavailable — please retry")
 
     # Workspace mode: query control DB for memberships
     user_email = getattr(request.state, 'user_email', None)

@@ -171,8 +171,9 @@ def run_http():
 
         # Fallback: legacy workspace DB ClientToken table
         # Only use legacy validation when control DB is NOT configured.
-        # When control DB is active, all tokens must be in the control DB.
-        if not email and not (settings.control_db_name and _db_module.engine_registry):
+        # When control DB is active (control_db_name set), all tokens must be
+        # in the control DB — never fall through to legacy, even if engine_registry is None.
+        if not email and not settings.control_db_name:
             result = validate_client_token(token_hash)
             if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
                 email = result["client_email"]

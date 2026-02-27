@@ -163,19 +163,24 @@ def _validate_redirect_uri(uri: str) -> bool:
 def _validate_mcp_token(token: str) -> str | None:
     """Validate an MCP client token. Returns client email if valid, None if not.
 
-    Tries control DB tokens table first when configured, falls back to
-    legacy workspace DB ClientToken table.
+    When control DB is configured, validates against control DB only (fail closed).
+    Legacy workspace DB fallback is only used when no control DB is configured.
     """
     if not token:
         return None
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    # Try control DB first when configured
     settings = get_settings()
     if settings.control_db_name:
-        result = validate_token_from_control_db(token_hash)
+        # Workspace mode: control DB is the sole token authority
+        try:
+            result = validate_token_from_control_db(token_hash)
+        except Exception as e:
+            logger.error("_validate_mcp_token: control DB error — failing closed: %s", e)
+            return None  # Deny access on DB errors
         if result and result.get("user_email"):
             return result["user_email"]
-    # Fallback: legacy workspace DB ClientToken table
+        return None  # Token not in control DB — do NOT fall through to legacy
+    # Legacy mode: no control DB configured
     result = validate_client_token(token_hash)
     if isinstance(result, dict) and not result.get("error") and result.get("client_email"):
         return result["client_email"]

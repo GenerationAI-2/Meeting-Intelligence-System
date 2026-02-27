@@ -48,15 +48,22 @@ async def get_current_user(request: Request):
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        # Try control DB first when configured
-        if settings.control_db_name and _db_module.engine_registry:
-            result = validate_token_from_control_db(token_hash)
-            if result and result.get("user_email"):
-                return result["user_email"]
-        # Fallback: legacy workspace DB ClientToken table
-        result = validate_client_token(token_hash)
-        if result and not result.get("error") and result.get("client_email"):
-            return result["client_email"]
+        if settings.control_db_name:
+            # Workspace mode: control DB is the sole token authority
+            if _db_module.engine_registry:
+                try:
+                    result = validate_token_from_control_db(token_hash)
+                    if result and result.get("user_email"):
+                        return result["user_email"]
+                except Exception:
+                    pass  # Fall through to Azure AD validation below
+            # Token not in control DB (or engine not ready) — don't try legacy.
+            # Fall through to Azure AD validation below.
+        else:
+            # Legacy mode: try legacy workspace DB ClientToken table
+            result = validate_client_token(token_hash)
+            if result and not result.get("error") and result.get("client_email"):
+                return result["client_email"]
 
     # 2. Azure Entra ID Token (for React Users)
     try:

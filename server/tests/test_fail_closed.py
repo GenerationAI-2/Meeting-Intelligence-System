@@ -6,10 +6,11 @@ Finding 1: System must fail closed (503/deny) when workspace mode is
 Finding 2: Token cache TTL reduced to 30s. clear_token_cache() available.
 Finding 3: MCP endpoints require Origin header OR valid auth token.
 
-Tests marked @pytest.mark.xfail document real bugs identified in the
-code review (27 Feb 2026) that have not yet been fixed. When the auth
-hardening work (migration Phase B) is complete, these marks should be
-removed and all tests should pass.
+Auth hardening (27 Feb 2026): All fail-closed bugs fixed.
+- dependencies.py: `or` condition split into separate checks (503 on engine_registry=None)
+- oauth.py: try/except on control DB + no legacy fallback when control_db_name set
+- api.py: no legacy token fallback when control_db_name set
+- main.py: legacy fallback only when control_db_name is empty
 """
 
 import asyncio
@@ -45,7 +46,6 @@ class TestResolveWorkspaceFailClosed:
         assert result.is_org_admin is True  # Legacy mode grants admin
         assert result.user_email == "test@example.com"
 
-    @pytest.mark.xfail(reason="BUG: dependencies.py:128 uses 'or' — treats engine_registry=None as legacy even when control_db_name is set. Fix in Phase B.")
     def test_503_when_control_db_set_but_engine_none(self):
         """control_db_name set + engine_registry=None → 503, NOT legacy admin."""
         from src.dependencies import resolve_workspace
@@ -129,7 +129,6 @@ class TestResolveWorkspaceFailClosed:
 class TestOAuthTokenFailClosed:
     """oauth._validate_mcp_token() must not fall through to legacy when control DB is configured."""
 
-    @pytest.mark.xfail(reason="BUG: oauth.py:178-181 always falls through to legacy validate_client_token even when control_db_name is set. Fix in Phase B.")
     def test_no_legacy_fallback_when_control_db_configured(self):
         """Token not in control DB → return None, NOT try legacy DB."""
         from src.oauth import _validate_mcp_token
@@ -145,7 +144,6 @@ class TestOAuthTokenFailClosed:
         assert result is None
         mock_legacy.assert_not_called()  # MUST NOT fall through to legacy
 
-    @pytest.mark.xfail(reason="BUG: oauth.py:174 has no try/except — control DB exception propagates uncaught. Fix in Phase B.")
     def test_fail_closed_on_control_db_error(self):
         """Control DB error → return None (deny), NOT try legacy DB."""
         from src.oauth import _validate_mcp_token
@@ -241,6 +239,56 @@ class TestMcpServerResolveCtxFailClosed:
 
         assert not isinstance(result, dict)  # Should be WorkspaceContext, not error dict
         assert result.is_org_admin is True
+
+
+# ============================================================================
+# API get_current_user() fail-closed tests
+# ============================================================================
+
+class TestApiTokenFailClosed:
+    """api.get_current_user() must not fall through to legacy token validation when control DB is configured."""
+
+    def test_no_legacy_token_fallback_when_control_db_set(self):
+        """control_db_name set + token not in control DB → falls through to Azure AD, NOT legacy DB."""
+        from src.api import get_current_user
+
+        mock_settings = MagicMock()
+        mock_settings.control_db_name = "my-control-db"
+        mock_settings.azure_client_id = "test-client-id"
+        mock_settings.azure_tenant_id = "test-tenant-id"
+
+        mock_request = MagicMock()
+        mock_request.headers = {"Authorization": "Bearer test-token"}
+
+        with patch("src.api.settings", mock_settings), \
+             patch("src.api._db_module") as mock_db, \
+             patch("src.api.validate_token_from_control_db", return_value=None), \
+             patch("src.api.validate_client_token") as mock_legacy, \
+             patch("src.api.azure_scheme", side_effect=HTTPException(401, "Not Azure AD")):
+            mock_db.engine_registry = MagicMock()
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(get_current_user(mock_request))
+
+        assert exc_info.value.status_code == 401
+        mock_legacy.assert_not_called()  # MUST NOT fall through to legacy
+
+    def test_legacy_token_allowed_when_no_control_db(self):
+        """No control_db_name → legacy token validation is permitted."""
+        from src.api import get_current_user
+
+        mock_settings = MagicMock()
+        mock_settings.control_db_name = ""
+
+        mock_request = MagicMock()
+        mock_request.headers = {"Authorization": "Bearer test-token"}
+
+        with patch("src.api.settings", mock_settings), \
+             patch("src.api._db_module") as mock_db, \
+             patch("src.api.validate_client_token", return_value={"client_email": "user@example.com"}):
+            mock_db.engine_registry = None
+            result = asyncio.run(get_current_user(mock_request))
+
+        assert result == "user@example.com"
 
 
 # ============================================================================
