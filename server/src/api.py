@@ -125,6 +125,34 @@ class TokenCreate(BaseModel):
     expires_days: Optional[int] = Field(None, gt=0, le=365)
 
 
+class ActionCreate(BaseModel):
+    action_text: str = Field(..., min_length=1, max_length=2000)
+    owner: str = Field(..., min_length=1, max_length=255)
+    due_date: Optional[str] = Field(None, max_length=10)
+    meeting_id: Optional[int] = None
+    notes: Optional[str] = Field(None, max_length=5000)
+
+
+class ActionUpdate(BaseModel):
+    action_text: Optional[str] = Field(None, min_length=1, max_length=2000)
+    owner: Optional[str] = Field(None, min_length=1, max_length=255)
+    due_date: Optional[str] = Field(None, max_length=10)
+    notes: Optional[str] = Field(None, max_length=5000)
+
+
+class DecisionCreate(BaseModel):
+    meeting_id: int
+    decision_text: str = Field(..., min_length=1, max_length=5000)
+    context: Optional[str] = Field(None, max_length=5000)
+
+
+class MeetingUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=500)
+    summary: Optional[str] = Field(None, max_length=50000)
+    attendees: Optional[str] = Field(None, max_length=2000)
+    tags: Optional[str] = Field(None, max_length=500)
+
+
 app = FastAPI(title="Meeting Intelligence API", version="1.0.0", swagger_ui_oauth2_redirect_url="/oauth2-redirect")
 
 # Request logging middleware
@@ -413,6 +441,96 @@ async def get_decision_endpoint(
         if result.get("code") == "NOT_FOUND":
             raise HTTPException(status_code=404, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@app.post("/api/actions", status_code=201)
+async def create_action_endpoint(
+    body: ActionCreate,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Create a new action item."""
+    result = call_with_retry(_get_engine_for_ctx(ctx), actions.create_action, ctx,
+                             action_text=body.action_text, owner=body.owner,
+                             due_date=body.due_date, meeting_id=body.meeting_id,
+                             notes=body.notes)
+    if isinstance(result, dict) and result.get("error"):
+        code = result.get("code", "")
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        if code == "FORBIDDEN":
+            raise HTTPException(status_code=403, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "create", "action", result.get("id"), auth_method="web")
+    return result
+
+
+@app.patch("/api/actions/{action_id}")
+async def update_action_endpoint(
+    action_id: int,
+    body: ActionUpdate,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Update an action's text, owner, due date, or notes."""
+    result = call_with_retry(_get_engine_for_ctx(ctx), actions.update_action, ctx,
+                             action_id=action_id,
+                             action_text=body.action_text, owner=body.owner,
+                             due_date=body.due_date, notes=body.notes)
+    if isinstance(result, dict) and result.get("error"):
+        code = result.get("code", "")
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        if code == "FORBIDDEN":
+            raise HTTPException(status_code=403, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "update", "action", action_id, auth_method="web")
+    return result
+
+
+@app.post("/api/decisions", status_code=201)
+async def create_decision_endpoint(
+    body: DecisionCreate,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Create a new decision linked to a meeting."""
+    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.create_decision, ctx,
+                             meeting_id=body.meeting_id,
+                             decision_text=body.decision_text,
+                             context=body.context)
+    if isinstance(result, dict) and result.get("error"):
+        code = result.get("code", "")
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        if code == "FORBIDDEN":
+            raise HTTPException(status_code=403, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "create", "decision", result.get("id"), auth_method="web")
+    return result
+
+
+@app.patch("/api/meetings/{meeting_id}")
+async def update_meeting_endpoint(
+    meeting_id: int,
+    body: MeetingUpdate,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Update a meeting's title, summary, attendees, or tags."""
+    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.update_meeting, ctx,
+                             meeting_id=meeting_id,
+                             title=body.title, summary=body.summary,
+                             attendees=body.attendees, tags=body.tags)
+    if isinstance(result, dict) and result.get("error"):
+        code = result.get("code", "")
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        if code == "FORBIDDEN":
+            raise HTTPException(status_code=403, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "update", "meeting", meeting_id, auth_method="web")
     return result
 
 

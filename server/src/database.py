@@ -20,7 +20,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import Generator, Any, Optional
+from typing import Generator, Optional
 
 import pyodbc
 pyodbc.pooling = False  # CRITICAL: disable pyodbc's hidden pool — conflicts with SQLAlchemy's pool
@@ -352,14 +352,6 @@ def test_connection() -> bool:
         return True
 
 
-def row_to_dict(cursor: pyodbc.Cursor, row: Any) -> dict:
-    """Convert a pyodbc row to a dictionary."""
-    if row is None:
-        return None
-    columns = [column[0] for column in cursor.description]
-    return dict(zip(columns, row))
-
-
 def rows_to_list(cursor: pyodbc.Cursor, rows: list) -> list[dict]:
     """Convert multiple pyodbc rows to a list of dictionaries."""
     columns = [column[0] for column in cursor.description]
@@ -367,10 +359,9 @@ def rows_to_list(cursor: pyodbc.Cursor, rows: list) -> list[dict]:
 
 
 # ============================================================================
-# CLIENT TOKEN MANAGEMENT (DEPRECATED — use validate_token_from_control_db)
-# These functions query the per-workspace ClientToken table.
-# Kept for backward compatibility with deployments that have not yet migrated
-# tokens to the control database. Will be removed in W4.
+# LEGACY CLIENT TOKEN VALIDATION
+# Queries the per-workspace ClientToken table. Only used when control_db_name
+# is empty (genuine legacy mode). Remove when all envs use control DB.
 # ============================================================================
 
 @retry_on_transient()
@@ -397,99 +388,6 @@ def validate_client_token(token_hash: str) -> dict | None:
         if row:
             return {"client_name": row[0], "client_email": row[1]}
         return None
-
-
-@retry_on_transient()
-def create_client_token(
-    client_name: str,
-    client_email: str,
-    created_by: str,
-    expires_days: int | None = None,
-    notes: str | None = None,
-) -> dict:
-    """Generate a new client token and store its hash in workspace DB.
-
-    DEPRECATED: New tokens should be created in the control database via manage_tokens.py.
-    Returns dict with {token (plaintext — show ONCE), token_hash, client_name, expires_at}.
-    """
-    plaintext_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(plaintext_token.encode()).hexdigest()
-
-    expires_at = None
-    if expires_days is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
-
-    with get_db() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO ClientToken (TokenHash, ClientName, ClientEmail, CreatedBy, ExpiresAt, Notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (token_hash, client_name, client_email, created_by, expires_at, notes)
-        )
-
-    return {
-        "token": plaintext_token,
-        "token_hash": token_hash,
-        "client_name": client_name,
-        "client_email": client_email,
-        "expires_at": expires_at.isoformat() if expires_at else "never",
-    }
-
-
-@retry_on_transient()
-def insert_token_hash(
-    token_hash: str,
-    client_name: str,
-    client_email: str,
-    created_by: str,
-    notes: str | None = None,
-) -> bool:
-    """Insert a pre-computed token hash (used for migration from env var).
-
-    DEPRECATED: Use control database tokens table via manage_tokens.py.
-    """
-    with get_db() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO ClientToken (TokenHash, ClientName, ClientEmail, CreatedBy, Notes)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (token_hash, client_name, client_email, created_by, notes)
-        )
-    return True
-
-
-@retry_on_transient()
-def revoke_client_token(token_id: int) -> bool:
-    """Revoke a token by setting IsActive = 0.
-
-    DEPRECATED: Use control database tokens table via manage_tokens.py.
-    """
-    with get_db() as cursor:
-        cursor.execute(
-            "UPDATE ClientToken SET IsActive = 0 WHERE TokenId = ?",
-            (token_id,)
-        )
-        return cursor.rowcount > 0
-
-
-@retry_on_transient()
-def list_client_tokens() -> list[dict]:
-    """List all tokens with metadata (NOT the hash — for admin display only).
-
-    DEPRECATED: Use control database tokens table via manage_tokens.py or admin API.
-    """
-    with get_db() as cursor:
-        cursor.execute(
-            """
-            SELECT TokenId, ClientName, ClientEmail, IsActive,
-                   ExpiresAt, CreatedAt, CreatedBy, LastUsedAt, Notes
-            FROM ClientToken
-            ORDER BY CreatedAt DESC
-            """
-        )
-        return rows_to_list(cursor, cursor.fetchall())
 
 
 # ============================================================================

@@ -88,6 +88,12 @@ export const meetingsApi = {
     search: (query, limit = 10) =>
         fetchApi(`/meetings/search?query=${encodeURIComponent(query)}&limit=${limit}`),
 
+    update: (id, data) =>
+        fetchApi(`/meetings/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(data),
+        }),
+
     delete: (id) => fetchApi(`/meetings/${id}`, { method: 'DELETE' }),
 };
 
@@ -99,6 +105,18 @@ export const actionsApi = {
     },
 
     get: (id) => fetchApi(`/actions/${id}`),
+
+    create: (data) =>
+        fetchApi('/actions', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    update: (id, data) =>
+        fetchApi(`/actions/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(data),
+        }),
 
     updateStatus: (id, status) =>
         fetchApi(`/actions/${id}/status`, {
@@ -119,6 +137,12 @@ export const decisionsApi = {
     },
 
     get: (id) => fetchApi(`/decisions/${id}`),
+
+    create: (data) =>
+        fetchApi('/decisions', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
 
     delete: (id) => fetchApi(`/decisions/${id}`, { method: 'DELETE' }),
 };

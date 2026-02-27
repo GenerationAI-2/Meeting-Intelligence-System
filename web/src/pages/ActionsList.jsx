@@ -15,6 +15,9 @@ function ActionsList() {
     const [total, setTotal] = useState(0);
     const [sortColumn, setSortColumn] = useState(null);
     const [sortDirection, setSortDirection] = useState(null);
+    const [showCreateForm, setShowCreateForm] = useState(false);
+    const [createForm, setCreateForm] = useState({ action_text: '', owner: '', due_date: '', notes: '' });
+    const [creating, setCreating] = useState(false);
     const perPage = 50;
 
     useEffect(() => {
@@ -53,6 +56,24 @@ function ActionsList() {
             ));
         } catch (err) {
             console.error('Failed to update status:', err);
+        }
+    }
+
+    async function handleCreate(e) {
+        e.preventDefault();
+        try {
+            setCreating(true);
+            const data = { action_text: createForm.action_text, owner: createForm.owner };
+            if (createForm.due_date) data.due_date = createForm.due_date;
+            if (createForm.notes) data.notes = createForm.notes;
+            await actionsApi.create(data);
+            setCreateForm({ action_text: '', owner: '', due_date: '', notes: '' });
+            setShowCreateForm(false);
+            loadActions();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setCreating(false);
         }
     }
 
@@ -108,10 +129,78 @@ function ActionsList() {
 
     return (
         <div>
-            <div className="mb-6">
-                <h1 className="text-2xl font-bold text-gray-900">Actions</h1>
-                <p className="text-gray-600">Track and manage action items</p>
+            <div className="mb-6 flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">Actions</h1>
+                    <p className="text-gray-600">Track and manage action items</p>
+                </div>
+                {permissions.can_write && (
+                    <button
+                        onClick={() => setShowCreateForm(!showCreateForm)}
+                        className="btn-primary"
+                    >
+                        {showCreateForm ? 'Cancel' : 'New Action'}
+                    </button>
+                )}
             </div>
+
+            {/* Create Action Form */}
+            {showCreateForm && (
+                <form onSubmit={handleCreate} className="card mb-6">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4">New Action</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="md:col-span-2">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Action *</label>
+                            <input
+                                type="text"
+                                required
+                                value={createForm.action_text}
+                                onChange={(e) => setCreateForm({ ...createForm, action_text: e.target.value })}
+                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2"
+                                placeholder="What needs to be done?"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Owner *</label>
+                            <input
+                                type="text"
+                                required
+                                value={createForm.owner}
+                                onChange={(e) => setCreateForm({ ...createForm, owner: e.target.value })}
+                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2"
+                                placeholder="Who is responsible?"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+                            <input
+                                type="date"
+                                value={createForm.due_date}
+                                onChange={(e) => setCreateForm({ ...createForm, due_date: e.target.value })}
+                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2"
+                            />
+                        </div>
+                        <div className="md:col-span-2">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                            <textarea
+                                value={createForm.notes}
+                                onChange={(e) => setCreateForm({ ...createForm, notes: e.target.value })}
+                                rows={2}
+                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2"
+                                placeholder="Additional context"
+                            />
+                        </div>
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                        <button type="submit" disabled={creating} className="btn-primary disabled:opacity-50">
+                            {creating ? 'Creating...' : 'Create Action'}
+                        </button>
+                        <button type="button" onClick={() => setShowCreateForm(false)} className="btn-secondary">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            )}
 
             {/* Filters */}
             <div className="card mb-6">
