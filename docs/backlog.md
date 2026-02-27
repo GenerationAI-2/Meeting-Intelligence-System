@@ -34,7 +34,7 @@ Must complete before handing a client their login.
 | # | Description | Priority | Notes |
 |---|-------------|----------|-------|
 | V1 | B2 live token refresh verification | NOW | ~1hr real usage |
-| I11 | Redeploy testing-instance + marshall with current image | NOW | ~1hr. Pipeline validated. |
+| I11 | Redeploy testing-instance + marshall with current image | PARTIAL | Testing-instance redeployed (27 Feb, 5 deploys). Control DB set up. Marshall still frozen on `f3758d1`. |
 
 ---
 
@@ -43,7 +43,7 @@ Must complete before handing a client their login.
 | # | Description | Priority | Notes |
 |---|-------------|----------|-------|
 | W1 | Column sorting on tables (click column header) | Medium | Applies to meetings, actions, decisions tables |
-| W2 | Fix "all" actions filter — only shows open actions regardless of selection | Medium | |
+| W2 | ~~Fix "all" actions filter~~ | DONE | Default changed to All. Committed `52bd364`. |
 | W3 | Owner field dropdown — can't freely type new owner names | Medium | |
 | W4 | Meeting time shows 12:00 AM — needs actual time from transcript | Medium | Part code / part prompting |
 | W7 | Attendee filtering in web UI (exists in MCP only) | Low | |
@@ -53,13 +53,13 @@ Must complete before handing a client their login.
 | # | Description | Priority | Notes |
 |---|-------------|----------|-------|
 | A1 | Wire up `get_decision()` MCP wrapper — function exists but no MCP tool | Medium | |
-| A2 | OAuth auth codes stored in-memory — lost on container restart | Medium | Technical debt. OAuthClient persists to DB but pending auth codes do not |
+| A2 | ~~OAuth auth codes stored in-memory~~ | N/A | OAuth 2.1 removed (27 Feb migration). |
 | A3 | Hardcoded `system@generationai.co.nz` for MCP user attribution | Low | `mcp_server.py:34` |
 | A4 | Email notifications for actions | Low | No current implementation |
 | A5 | Two-database model (team + personal per client) | Low | Design decision from architecture doc |
 | A6 | Transcript storage decision — `RawTranscript` column exists but usage not confirmed | Low | Architecture doc says not stored; schema supports it |
-| A7 | Remove legacy `validate_client_token` fallback | Low | All new envs use control DB; legacy path is dead code |
-| A8 | ChatGPT MCP support for workspace mode — OAuth identity has no memberships | Medium | Need to map OAuth clients to workspace members |
+| A7 | Remove legacy `validate_client_token` fallback | Low | Partially addressed (27 Feb): OAuth removed, SSE removed. Legacy fallback still exists for envs without control DB. |
+| A8 | ~~ChatGPT MCP support~~ | N/A | OAuth 2.1 removed (27 Feb migration). ChatGPT would need token-based auth or future re-implementation. |
 | A9 | Auto-refresh / polling for web UI — content goes stale | Low | Periodic polling or optimistic refresh on tab focus |
 
 ## Infrastructure / DevOps

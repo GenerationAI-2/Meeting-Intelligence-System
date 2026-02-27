@@ -31,34 +31,41 @@ npm run dev  # Run on :5173
 
 **Required environment variables (in `.env.deploy`):**
 - `AZURE_SQL_SERVER` — Azure SQL server hostname
-- `AZURE_SQL_DATABASE` — Database name
-- `MCP_AUTH_TOKENS` — (Legacy) JSON map of token hashes to emails. New deployments use DB-backed `ClientToken` table instead.
-- `ALLOWED_USERS` — Comma-separated emails for web UI access
+- `AZURE_SQL_DATABASE` — Database name (workspace DB)
+- `CONTROL_DB_NAME` — Control database name (workspace/user registry). Omit for legacy mode.
+- `ALLOWED_USERS` — Comma-separated emails for web UI access (legacy mode gate; bypassed when control DB active)
 - `CORS_ORIGINS` — Allowed CORS origins
-- `JWT_SECRET` — Secret for OAuth JWT tokens
-- `JWT_SECRET_PREVIOUS` — (Optional) Previous JWT secret for dual-key rotation during secret rotation window
-- `OAUTH_BASE_URL` — Base URL for OAuth endpoints (e.g., team instance URL)
 - `VITE_*` — Frontend config (client ID, tenant, API URL)
+
+**Removed env vars (27 Feb migration):**
+- `MCP_AUTH_TOKENS` — Removed. All envs now use DB-backed tokens (control DB `tokens` table or workspace DB `ClientToken` table).
+- `JWT_SECRET` / `JWT_SECRET_PREVIOUS` — Removed with OAuth 2.1.
+- `OAUTH_BASE_URL` — Removed with OAuth 2.1.
 
 ---
 
 ## Architecture
 
-FastAPI server handles both REST API (for web UI) and MCP/SSE (for Claude). Single container deployed to Azure Container Apps. Database is Azure SQL with managed identity auth.
+FastAPI server handles both REST API (for web UI) and MCP Streamable HTTP (for AI assistants). Single container deployed to Azure Container Apps. Database is Azure SQL with managed identity auth.
 
 ```
 server/src/
-├── main.py          — Entry point (--http for web, stdio for MCP)
-├── api.py           — REST API endpoints for web UI
-├── mcp_server.py    — MCP tool definitions and handlers
-├── config.py        — Environment configuration (pydantic-settings)
-├── database.py      — Azure SQL connection (managed identity)
-└── tools/           — Business logic (meetings.py, actions.py, decisions.py)
+├── main.py              — Entry point (--http for web, stdio for MCP)
+├── api.py               — REST API endpoints for web UI (CRUD)
+├── mcp_server.py        — MCP tool definitions and handlers
+├── admin.py             — Admin API (workspace CRUD, member management, audit)
+├── config.py            — Environment configuration (pydantic-settings)
+├── database.py          — Azure SQL connection (managed identity) + EngineRegistry
+├── dependencies.py      — Workspace resolution dependency chain
+├── permissions.py       — RBAC permission checker (check_permission)
+├── workspace_context.py — WorkspaceContext + WorkspaceMembership models
+├── logging_config.py    — Structured logging configuration
+└── tools/               — Business logic (meetings.py, actions.py, decisions.py)
 
 web/src/
 ├── App.jsx          — React router and auth setup
-├── pages/           — MeetingsList, ActionsList, DecisionsList, detail pages
-└── components/      — Shared components
+├── pages/           — MeetingsList, ActionsList, DecisionsList, Settings, WorkspaceAdmin
+└── components/      — Layout (user dropdown), WorkspaceSwitcher
 ```
 
 ---
@@ -68,19 +75,17 @@ web/src/
 | File | Purpose |
 |------|---------|
 | `server/src/mcp_server.py` | MCP tool definitions - what Claude can do |
-| `server/src/oauth.py` | OAuth 2.1 endpoints for ChatGPT MCP support |
 | `server/src/tools/meetings.py` | Meeting CRUD + delete (cascades to actions/decisions) |
 | `server/src/config.py` | All environment variable handling |
 | `server/src/database.py` | Azure SQL connection with managed identity |
-| `deploy.sh` | Legacy deployment script (team/demo) |
-| `infra/deploy-bicep.sh` | Bicep deployment script (new environments) |
+| `infra/deploy-bicep.sh` | Bicep deployment script (all environments) |
 | `infra/parameters/*.bicepparam` | Per-environment Bicep parameters (committed to git) |
 | `server/scripts/manage_tokens.py` | CLI for creating/revoking/rotating client tokens |
 | `.env.deploy` | Secrets (not in git) |
-| `schema.sql` | Database schema definition |
-| `server/migrations/002_client_tokens.sql` | ClientToken + OAuthClient table migration |
-| `server/migrations/003_refresh_token_usage.sql` | Refresh token usage tracking migration |
-| `server/scripts/migrate.py` | Multi-database migration runner |
+| `schema.sql` | Workspace database schema (Meeting, Action, Decision) |
+| `scripts/control_schema.sql` | Control database schema (users, workspaces, workspace_members, tokens, audit_log) |
+| `server/src/dependencies.py` | Workspace resolution dependency chain (authenticate → resolve → get_db) |
+| `server/src/admin.py` | Admin API (workspace CRUD, member management, audit log) |
 | `infra/audit.sh` | Pre-deploy vulnerability scanning (pip-audit + npm audit + trivy) |
 | `infra/deploy-all.sh` | Multi-client staged deployment script |
 
@@ -93,7 +98,7 @@ web/src/
 - **Status values**: "Open", "Complete", "Parked" (exact strings)
 - **Tags**: Comma-separated lowercase strings (e.g., "planning, engineering")
 - **Attendees**: Comma-separated email addresses
-- **Auth tokens (new — DB-backed)**: Client receives a plaintext token. Middleware hashes it once with SHA256 and looks up the hash in `ClientToken` table. DB stores `SHA256(plaintext)` — single hash. The old `MCP_AUTH_TOKENS` env var pattern (hash IS the token) is legacy and only used by the `migrate` command.
+- **Auth tokens (DB-backed)**: Client receives a plaintext token. Middleware hashes it once with SHA256 and looks up the hash in the control DB `tokens` table (or legacy `ClientToken` table). DB stores `SHA256(plaintext)` — single hash.
 - **Naming conventions**: Container Apps are `mi-${environmentName}`, resource groups are `meeting-intelligence-${environmentName}-rg`, images are `mi-${environmentName}:<tag>`
 - **Managed Identity**: DB auth uses Azure MI SID based on App Registration's Application (Client) ID
 
@@ -133,9 +138,10 @@ web/src/
 | `_run_workspace_schema` skips `CREATE TABLE` | `schema.sql` starts with `-- comments` before `CREATE TABLE Meeting`. The split-on-`;` + `startswith('--')` check skipped the entire first statement block. Fix: strip comment lines from each statement before checking if it's empty. | 2026-02-25 |
 | Admin API `POST /workspaces` needs MI `dbmanager` on master | Container app MI needs `dbmanager` role on the master database to execute `CREATE DATABASE`. Not granted by default. Fix: added to `deploy-new-client.sh` Step 2a. | 2026-02-25 |
 | `switch_workspace` doesn't persist across stateless HTTP requests | Streamable HTTP is stateless — each POST is a new request, so `set_mcp_workspace_context(ctx)` using contextvars dies at request end. Fix: in-memory `_workspace_override` dict in `mcp_server.py` keyed by user email, checked by `_resolve_ctx` before falling back to default. Stale overrides (e.g., removed from workspace) auto-clear. | 2026-02-26 |
-| Archiving workspace while UI has it selected causes 403 on all API calls | Web UI sends `X-Workspace-ID` header from stored state. If that workspace is archived, `_get_user_memberships()` excludes it (`AND w.is_archived = 0`), so `_resolve_active_workspace` raises 403 "Not a member". Fix: user must clear browser storage or hard refresh to reset to default workspace. Could be improved with server-side fallback. | 2026-02-26 |
-| OAuth identity has no workspace memberships | Claude.ai OAuth flow creates identity `oauth:<client_id>` which doesn't match any workspace member email. Result: `_get_user_memberships()` returns empty → 403. Use token auth (SSE with token param) instead of OAuth for MCP connections. | 2026-02-26 |
-| Deleting a workspace database breaks legacy token fallback | `AZURE_SQL_DATABASE` points to the "general" workspace DB which has `ClientToken`/`OAuthClient` tables from deploy. If that DB is deleted (e.g., archiving unused General workspace), `validate_client_token()` crashes with `Invalid object name 'ClientToken'` → 500 on all auth. Fix: create `ClientToken`+`OAuthClient` tables in all workspace DBs, or point `AZURE_SQL_DATABASE` to a DB that has them. Long-term: remove legacy fallback when all envs use control DB. | 2026-02-26 |
+| Archiving workspace while UI has it selected causes 403 on all API calls | Web UI sends `X-Workspace-ID` header from stored state. If that workspace is archived, `_resolve_active_workspace` originally raised 403. Fix: server now returns `archived_ids` separately and falls back to default workspace with warning log. Unauthorized workspaces still get 403. | 2026-02-27 |
+| Claude.ai custom connector has no custom headers field | Claude.ai's "Add custom connector" dialog only has a URL field + OAuth fields — no way to set Bearer/X-API-Key headers. Fix: re-added query param token auth (`/mcp?token=<token>`) in main.py auth middleware. | 2026-02-27 |
+| Control DB needs manual setup on existing environments transitioning to workspace mode | `deploy-bicep.sh` creates the control DB but doesn't apply schema, seed data, or create MI user. Deploying workspace-mode code to an existing env without these steps → 503 (`Login failed` then `Invalid object name 'tokens'`). Fix: manually create MI user in control DB (db_datareader + db_datawriter), apply `control_schema.sql`, seed workspace/users/memberships/tokens, grant MI `dbmanager` on master for workspace creation. | 2026-02-27 |
+| pyodbc Azure AD token struct packing | Wrong: `struct.pack('=IH', len(token_bytes) + 2, 1)`. Correct: `struct.pack('<I', len(token_bytes)) + token_bytes`. Symptom: 18456 login failed for token-identified principal. | 2026-02-27 |
 
 ---
 
@@ -148,26 +154,26 @@ web/src/
 
 **What's working:**
 - 22 MCP tools: meetings (6), actions (8), decisions (5), schema (1), workspace (1), plus self-service token endpoints (`/api/me/tokens`)
-- **P7 workspace architecture MERGED to main** — multi-database isolation, RBAC (viewer/member/chair + org_admin), admin API, 229 tests passing
+- **P7 workspace architecture** — multi-database isolation, RBAC (viewer/member/chair + org_admin), admin API, 239 tests passing
 - **Self-service PAT generation** — Settings page with generate/list/revoke. Three provisioning states. User profile dropdown with dynamic connection URLs.
-- 6 database tables per workspace: Meeting, Action, Decision, ClientToken, OAuthClient, RefreshTokenUsage + `_MigrationHistory` tracking table
-- Control database tables: users, workspaces, workspace_members, audit_log
-- 4 transport methods: Streamable HTTP (`/mcp`), SSE (`/sse`), stdio (local), REST (`/api/*`)
-- Full CRUD for meetings, actions, decisions via MCP tools. Web UI is read-only for creation (no create/edit forms); only action status updates are supported in UI.
+- **Web UI full CRUD** — create/edit/delete for meetings, actions, decisions. Action status updates (complete/park). Inline editing.
+- 3 database tables per workspace: Meeting, Action, Decision + `_MigrationHistory` tracking table
+- Control database tables: users, workspaces, workspace_members, tokens, audit_log
+- 2 transport methods: Streamable HTTP (`/mcp`), stdio (local). REST (`/api/*`) for web UI.
 - Delete operations for all entities (cascade delete for meetings done in application code, not FK constraints)
-- Azure AD authentication for web UI (with email whitelist)
-- MCP authentication (multiple methods):
-  - Token auth (query param / Bearer header / X-API-Key) for Claude
-  - Path-based token auth for Copilot (`/mcp/{token}`)
-  - OAuth 2.1 with DCR + PKCE for ChatGPT (hardened: redirect URI allowlist + token-gated consent + origin-based resource indicator matching + refresh token rotation + token revocation endpoint)
+- Azure AD authentication for web UI (bypasses ALLOWED_USERS whitelist when control DB active)
+- MCP authentication:
+  - Bearer header (`Authorization: Bearer <token>`)
+  - API key header (`X-API-Key: <token>`)
+  - Query param (`/mcp?token=<token>`) — for Claude.ai custom connector
 - DB-backed client tokens with SHA256 hashing, 5-min in-memory cache
 - Connection pooling (QueuePool) with retry-on-transient decorator (17 Azure SQL error codes)
 - Pydantic validation on all MCP tools with field limits
-- Tiered rate limiting: MCP 120/min per-token, OAuth 20/min per-IP, API 60/min per-IP. Returns 429 with Retry-After header.
+- Tiered rate limiting: MCP 120/min per-token, API 60/min per-IP. Returns 429 with Retry-After header.
 - Attendee and tag filtering on meetings (MCP only; web UI has no attendee filter)
 - Transcript storage and search (keyword search with snippet extraction)
-- Three environments: genai (internal), testing-instance (Mark demos), marshall (client, frozen on pre-P7 code)
-- D16 security fixes deployed to team and demo (2026-02-12): 19 fixes across 4 batches, 60 tests passing
+- Three environments: genai (internal, multi-workspace), testing-instance (Mark demos, multi-workspace), marshall (client, frozen on pre-P7 code)
+- Archived workspace graceful fallback — if UI sends stale workspace ID for an archived workspace, server falls back to default instead of 403
 - **Security:**
   - Non-root container user (appuser)
   - Security headers on all responses (X-Content-Type-Options, X-Frame-Options, CSP, Referrer-Policy, Permissions-Policy, Cache-Control on auth endpoints)
@@ -175,15 +181,10 @@ web/src/
   - CORS restricted to specific methods and headers
   - Tiered rate limiting on auth and API endpoints
   - Pydantic field-level validation with length limits on all MCP tools
-  - OAuth client_secret hashed with SHA256
   - Server-side HTML tag stripping on all text inputs
   - Null byte stripping on all text inputs
-  - JWT dual-key rotation support (JWT_SECRET_PREVIOUS)
-  - OAuth refresh token rotation on use (RFC-compliant)
-  - Token revocation endpoint (`/oauth/revoke`, RFC 7009)
-  - RFC 9728 protected resource metadata (`/.well-known/oauth-protected-resource`)
   - MCP-Protocol-Version header validation
-  - RFC 8707 resource indicators
+  - Fail-closed auth — control DB unavailable → 503 (not silent admin escalation)
   - Migration framework with checksum verification and rollback support
 - **Observability:**
   - Application Insights telemetry (via azure-monitor-opentelemetry)
@@ -196,7 +197,9 @@ web/src/
 - **Infrastructure as Code:** Bicep templates (6 modules) managing Container App, SQL, Key Vault, monitoring, identity/RBAC. All environments are Bicep-managed.
 - **Documentation:** 14 legacy docs archived to `3-delivery/_archive/` (all pre-P7). Docs wave rewrite planned (DOC1-DOC4). ADRs and working docs in repo `/docs/`.
 
-**Known issues:** See `docs/backlog.md` for full list. Key items: Marshall frozen on pre-P7 code (`f3758d1`), no CI/CD, ChatGPT requires manual connector enable per chat.
+**Known issues:** See `docs/backlog.md` for full list. Key items: Marshall frozen on pre-P7 code (`f3758d1`), no CI/CD.
+
+**Removed (27 Feb migration):** OAuth 2.1 (DCR, PKCE, refresh tokens, revocation endpoint, protected resource metadata, resource indicators), SSE transport (`/sse`), path-based token auth (`/mcp/{token}`), legacy `MCP_AUTH_TOKENS` env var, JWT dual-key rotation.
 
 ---
 
@@ -214,7 +217,6 @@ Single source of truth for all known issues, tech debt, future ideas, and securi
 | mcp[cli] | >=1.8.0,<2.0.0 | Model Context Protocol SDK (Streamable HTTP) |
 | pyodbc | latest | Azure SQL connectivity |
 | pydantic-settings | latest | Environment config management |
-| PyJWT | latest | OAuth 2.1 JWT token handling |
 | React | 18.x | Frontend framework |
 | MSAL React | latest | Azure AD authentication |
 | Vite | latest | Frontend build tool |
