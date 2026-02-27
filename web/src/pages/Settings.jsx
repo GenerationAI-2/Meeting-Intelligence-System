@@ -309,6 +309,13 @@ function Settings() {
                 </div>
                 <div className="p-4 space-y-4 text-sm text-gray-600">
                     <div>
+                        <h3 className="font-medium text-gray-900 mb-1">Claude.ai</h3>
+                        <p className="mb-1">Add as a custom connector with this URL:</p>
+                        <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
+                            {`${window.location.origin}/mcp?token=YOUR_TOKEN`}
+                        </code>
+                    </div>
+                    <div>
                         <h3 className="font-medium text-gray-900 mb-1">Claude Desktop</h3>
                         <p className="mb-2">Add to your Claude Desktop MCP server config:</p>
                         <pre className="px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all whitespace-pre-wrap">

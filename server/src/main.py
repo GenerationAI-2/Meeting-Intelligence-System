@@ -436,13 +436,15 @@ def run_http():
                     }
                 )
 
-        # Extract token from headers (Bearer or X-API-Key)
+        # Extract token from headers (Bearer or X-API-Key) or query param
         token = None
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
         if not token:
             token = request.headers.get("X-API-Key")
+        if not token:
+            token = request.query_params.get("token")
 
         if not token:
             return Response("Unauthorized", status_code=401)
