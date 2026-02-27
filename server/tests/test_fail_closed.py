@@ -119,7 +119,7 @@ class TestResolveWorkspaceFailClosed:
             mock_cursor = MagicMock()
             mock_get_db.return_value.__enter__ = MagicMock(return_value=mock_cursor)
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-            with patch("src.dependencies._get_user_memberships", return_value=(False, None, [])):
+            with patch("src.dependencies._get_user_memberships", return_value=(False, None, [], set())):
                 with pytest.raises(HTTPException) as exc_info:
                     asyncio.run(resolve_workspace(request, None))
 

@@ -37,11 +37,12 @@ async def authenticate_and_store(request: Request) -> str:
 
 def _get_user_memberships(
     cursor: pyodbc.Cursor, email: str
-) -> tuple[bool, Optional[int], list[WorkspaceMembership]]:
+) -> tuple[bool, Optional[int], list[WorkspaceMembership], set[str]]:
     """Query control DB: user -> is_org_admin + default_workspace_id + workspace memberships.
 
-    Returns (is_org_admin, default_workspace_id, [WorkspaceMembership, ...]).
-    SQL joins users -> workspace_members -> workspaces.
+    Returns (is_org_admin, default_workspace_id, [WorkspaceMembership, ...], archived_ids).
+    archived_ids contains workspace name and id strings for archived workspaces the user
+    was a member of — used to distinguish "archived" from "never a member".
     """
     cursor.execute(
         """
@@ -53,7 +54,7 @@ def _get_user_memberships(
     )
     user_row = cursor.fetchone()
     if not user_row:
-        return (False, None, [])
+        return (False, None, [], set())
 
     is_org_admin = bool(user_row[0])
     default_workspace_id = user_row[1]
@@ -65,31 +66,35 @@ def _get_user_memberships(
         FROM workspace_members wm
         JOIN workspaces w ON w.id = wm.workspace_id
         WHERE wm.user_id = (SELECT id FROM users WHERE email = ?)
-          AND w.is_archived = 0
-        ORDER BY w.is_default DESC, w.name
+        ORDER BY w.is_archived, w.is_default DESC, w.name
         """,
         (email,)
     )
     rows = cursor.fetchall()
-    memberships = [
-        WorkspaceMembership(
-            workspace_id=row[0],
-            workspace_name=row[1],
-            workspace_display_name=row[2],
-            db_name=row[3],
-            role=row[4],
-            is_default=bool(row[5]),
-            is_archived=bool(row[6]),
-        )
-        for row in rows
-    ]
-    return (is_org_admin, default_workspace_id, memberships)
+    memberships = []
+    archived_ids: set[str] = set()
+    for row in rows:
+        if bool(row[6]):  # is_archived
+            archived_ids.add(row[1])        # workspace name
+            archived_ids.add(str(row[0]))   # workspace id
+        else:
+            memberships.append(WorkspaceMembership(
+                workspace_id=row[0],
+                workspace_name=row[1],
+                workspace_display_name=row[2],
+                db_name=row[3],
+                role=row[4],
+                is_default=bool(row[5]),
+                is_archived=False,
+            ))
+    return (is_org_admin, default_workspace_id, memberships, archived_ids)
 
 
 def _resolve_active_workspace(
     memberships: list[WorkspaceMembership],
     requested: Optional[str],
     default_workspace_id: Optional[int],
+    archived_ids: set[str] | None = None,
 ) -> WorkspaceMembership:
     """Pick the active workspace: explicit request > user default > org default > first."""
     if not memberships:
@@ -100,7 +105,12 @@ def _resolve_active_workspace(
         for m in memberships:
             if m.workspace_name == requested or str(m.workspace_id) == requested:
                 return m
-        raise HTTPException(403, f"Not a member of workspace '{requested}'")
+        # Check if the workspace was archived — fall back gracefully so UI recovers.
+        # If it's not archived, the user was never a member — 403.
+        if archived_ids and requested in archived_ids:
+            logger.warning("Requested workspace '%s' is archived — falling back to default", requested)
+        else:
+            raise HTTPException(403, f"Not a member of workspace '{requested}'")
 
     # User's default workspace
     if default_workspace_id:
@@ -143,7 +153,7 @@ async def resolve_workspace(
 
     try:
         with get_control_db() as cursor:
-            is_org_admin, default_ws_id, memberships = _get_user_memberships(cursor, user_email)
+            is_org_admin, default_ws_id, memberships, archived_ids = _get_user_memberships(cursor, user_email)
     except Exception as e:
         logger.error("resolve_workspace: control DB unavailable — failing closed: %s: %s",
                      type(e).__name__, e)
@@ -152,7 +162,7 @@ async def resolve_workspace(
     if not memberships:
         raise HTTPException(403, "User has no workspace memberships")
 
-    active = _resolve_active_workspace(memberships, x_workspace_id, default_ws_id)
+    active = _resolve_active_workspace(memberships, x_workspace_id, default_ws_id, archived_ids)
 
     return WorkspaceContext(
         user_email=user_email,
