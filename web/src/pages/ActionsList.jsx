@@ -8,7 +8,7 @@ function ActionsList() {
     const [actions, setActions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [statusFilter, setStatusFilter] = useState('Open');
+    const [statusFilter, setStatusFilter] = useState('All');
     const [ownerFilter, setOwnerFilter] = useState('');
     const [owners, setOwners] = useState([]);
     const [page, setPage] = useState(1);
