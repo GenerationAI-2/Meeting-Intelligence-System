@@ -26,7 +26,7 @@ npm install
 npm run dev  # Run on :5173
 
 # Deploy
-./infra/deploy-bicep.sh marshall  # or team/demo
+./infra/deploy-bicep.sh genai     # or testing-instance/marshall
 ```
 
 **Required environment variables (in `.env.deploy`):**
@@ -166,7 +166,7 @@ web/src/
 - Tiered rate limiting: MCP 120/min per-token, OAuth 20/min per-IP, API 60/min per-IP. Returns 429 with Retry-After header.
 - Attendee and tag filtering on meetings (MCP only; web UI has no attendee filter)
 - Transcript storage and search (keyword search with snippet extraction)
-- Three environments: team (internal), demo (Mark sign-off), marshall (first client)
+- Three environments: genai (internal), testing-instance (Mark demos), marshall (client, frozen on pre-P7 code)
 - D16 security fixes deployed to team and demo (2026-02-12): 19 fixes across 4 batches, 60 tests passing
 - **Security:**
   - Non-root container user (appuser)
@@ -193,11 +193,10 @@ web/src/
   - Budget alerts ($35 AUD/month: 80% warning, 100% critical)
   - Azure Monitor alert rules (7 per env): 5xx errors, response time, container restarts, replica-zero (client envs only), CPU, memory, auth failure spike
   - Pre-deploy vulnerability scanning via `infra/audit.sh`
-- **Infrastructure as Code:** Bicep templates (6 modules) managing Container App, SQL, Key Vault, monitoring, identity/RBAC
-  - Note: team/demo are pre-Bicep environments — use `az containerapp update` for image deploys, deploy Bicep modules (e.g., alerts) standalone. Full Bicep deploy is for new environments only (e.g., marshall).
+- **Infrastructure as Code:** Bicep templates (6 modules) managing Container App, SQL, Key Vault, monitoring, identity/RBAC. All environments are Bicep-managed.
 - **Documentation:** 14 legacy docs archived to `3-delivery/_archive/` (all pre-P7). Docs wave rewrite planned (DOC1-DOC4). ADRs and working docs in repo `/docs/`.
 
-**Known issues:** See `docs/backlog.md` for full list. Key items: Marshall pending D16 rollout, no CI/CD, ChatGPT requires manual connector enable per chat.
+**Known issues:** See `docs/backlog.md` for full list. Key items: Marshall frozen on pre-P7 code (`f3758d1`), no CI/CD, ChatGPT requires manual connector enable per chat.
 
 ---
 
@@ -344,8 +343,7 @@ If push fails (e.g. remote has diverged), do NOT force push. Pull with rebase (`
 
 **Deployment notes:**
 - Always use a unique image tag: `./infra/deploy-bicep.sh marshall $(date +%Y%m%d%H%M%S)`
-- `deploy.sh` is deprecated — use `infra/deploy-bicep.sh` for new environments (marshall)
-- **Pre-Bicep environments (team/demo):** Use `az containerapp update --image` for image deploys. Deploy Bicep modules (e.g., alerts) standalone. Full Bicep deploy creates new per-env infra — do NOT use.
+- `deploy.sh` is deprecated (archived). All environments use `infra/deploy-bicep.sh`.
 - **ACR builds must include VITE build args:** `--build-arg VITE_SPA_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_API_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_AZURE_TENANT_ID=12e7fcaa-f776-4545-aacf-e89be7737cf3 --build-arg VITE_API_URL=/api`
 - After deploy, reconnect MCP in Claude to refresh tool list
 - Check revision status: `az containerapp revision list --name [app] --resource-group [rg] -o table`
@@ -407,13 +405,13 @@ If you don't have access to Second Brain folder:
 
 | Environment | Web URL | Database | Scale | Purpose |
 |-------------|---------|----------|-------|---------|
-| Team | meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io | meeting-intelligence-team | 0-10 | Internal use |
-| Demo | meeting-intelligence.ambitiousbay-58ea1c1f.australiaeast.azurecontainerapps.io | meeting-intelligence | 0-10 | Mark sign-off |
-| Marshall | mi-marshall.delightfulpebble-aa90cd5c.australiaeast.azurecontainerapps.io | mi-marshall | 1-10 | Test user (John Marshall) |
+| GenAI | mi-genai.greenbush-6afc2303.australiaeast.azurecontainerapps.io | mi-genai + mi-genai-control | 0-10 | Internal use (multi-workspace, control DB) |
+| Marshall | mi-marshall.delightfulpebble-aa90cd5c.australiaeast.azurecontainerapps.io | mi-marshall | 0-10 | Client (John Marshall). Frozen on `f3758d1` (pre-P7). |
 | Testing Instance | mi-testing-instance.icycliff-e324f345.australiaeast.azurecontainerapps.io | mi-testing-instance | 1-10 | Client demos (Mark) |
-| Battletest | mi-battletest.whitedune-43b88d45.australiaeast.azurecontainerapps.io | mi-battletest + mi-battletest-control | 1-10 | P7 workspace RBAC testing |
 
-**Estimated monthly cost:** ~$33 AUD (team + demo scale-to-zero), Marshall + testing-instance + battletest are always-on (minReplicas=1)
+**Decommissioned (Feb 2026):** team, demo, battletest. Team/demo data migrated to genai workspaces. Battletest replaced by genai.
+
+**Estimated monthly cost:** ~$20 AUD (genai + marshall scale-to-zero, testing-instance always-on)
 
 ---
 
@@ -443,7 +441,7 @@ If you don't have access to Second Brain folder:
 
 - **Project folder:** `Second Brain/Project Management/Projects/GenerationAI - Meeting Intelligence System/`
 - **Decision log:** `Second Brain/Project Management/Projects/GenerationAI - Meeting Intelligence System/2-build/mi-decisions.md`
-- **Azure Resource Groups:** meeting-intelligence-dev-rg, meeting-intelligence-team-rg, meeting-intelligence-prod-rg
+- **Azure Resource Groups:** meeting-intelligence-genai-rg, meeting-intelligence-marshall-rg, meeting-intelligence-testing-instance-rg
 - **SQL Server:** genai-sql-server (in rg-generationAI-Internal)
 - **Container Registry:** meetingintelacr20260116 (in meeting-intelligence-v2-rg)
 
