@@ -309,22 +309,24 @@ function Settings() {
                 </div>
                 <div className="p-4 space-y-4 text-sm text-gray-600">
                     <div>
-                        <h3 className="font-medium text-gray-900 mb-1">Claude Desktop (SSE)</h3>
-                        <p className="mb-1">Add to your Claude Desktop config:</p>
-                        <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
-                            {`"url": "${window.location.origin}/sse?token=YOUR_TOKEN"`}
-                        </code>
-                    </div>
-                    <div>
-                        <h3 className="font-medium text-gray-900 mb-1">Copilot Studio</h3>
-                        <p className="mb-1">Use the path-based URL:</p>
-                        <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
-                            {`${window.location.origin}/mcp/YOUR_TOKEN`}
-                        </code>
+                        <h3 className="font-medium text-gray-900 mb-1">Claude Desktop</h3>
+                        <p className="mb-2">Add to your Claude Desktop MCP server config:</p>
+                        <pre className="px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all whitespace-pre-wrap">
+{`{
+  "url": "${window.location.origin}/mcp",
+  "headers": {
+    "Authorization": "Bearer YOUR_TOKEN"
+  }
+}`}
+                        </pre>
                     </div>
                     <div>
                         <h3 className="font-medium text-gray-900 mb-1">Other MCP Clients</h3>
-                        <p>Use a Bearer token in the Authorization header or pass it as a query parameter.</p>
+                        <p className="mb-1">Connect to the Streamable HTTP endpoint:</p>
+                        <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
+                            {`${window.location.origin}/mcp`}
+                        </code>
+                        <p className="mt-1">Authenticate with a <strong>Bearer</strong> token in the Authorization header or an <strong>X-API-Key</strong> header.</p>
                     </div>
                     <p className="text-xs text-gray-400 mt-2">
                         Token revocation may take up to 5 minutes to take effect due to caching.
