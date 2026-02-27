@@ -109,7 +109,7 @@ async def get_current_user(request: Request):
     # Whitelist Check — only in legacy mode (no control DB).
     # In workspace mode, access is controlled by control DB memberships
     # (resolve_workspace raises 403 if user has no workspace memberships).
-    if not settings.control_db_name or not _db_module.engine_registry:
+    if not settings.control_db_name:
         allowed_users = settings.get_allowed_users_list()
         if user_email.lower() not in allowed_users:
             raise HTTPException(

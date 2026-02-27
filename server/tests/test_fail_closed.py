@@ -8,9 +8,9 @@ Finding 3: MCP endpoints require Origin header OR valid auth token.
 
 Auth hardening (27 Feb 2026): All fail-closed bugs fixed.
 - dependencies.py: `or` condition split into separate checks (503 on engine_registry=None)
-- oauth.py: try/except on control DB + no legacy fallback when control_db_name set
 - api.py: no legacy token fallback when control_db_name set
 - main.py: legacy fallback only when control_db_name is empty
+- oauth.py: removed entirely (OAuth 2.1 for ChatGPT removed)
 """
 
 import asyncio
@@ -124,75 +124,6 @@ class TestResolveWorkspaceFailClosed:
                     asyncio.run(resolve_workspace(request, None))
 
         assert exc_info.value.status_code == 403
-
-
-class TestOAuthTokenFailClosed:
-    """oauth._validate_mcp_token() must not fall through to legacy when control DB is configured."""
-
-    def test_no_legacy_fallback_when_control_db_configured(self):
-        """Token not in control DB → return None, NOT try legacy DB."""
-        from src.oauth import _validate_mcp_token
-
-        mock_settings = MagicMock()
-        mock_settings.control_db_name = "my-control-db"
-
-        with patch("src.oauth.get_settings", return_value=mock_settings), \
-             patch("src.oauth.validate_token_from_control_db", return_value=None), \
-             patch("src.oauth.validate_client_token") as mock_legacy:
-            result = _validate_mcp_token("some-token")
-
-        assert result is None
-        mock_legacy.assert_not_called()  # MUST NOT fall through to legacy
-
-    def test_fail_closed_on_control_db_error(self):
-        """Control DB error → return None (deny), NOT try legacy DB."""
-        from src.oauth import _validate_mcp_token
-
-        mock_settings = MagicMock()
-        mock_settings.control_db_name = "my-control-db"
-
-        with patch("src.oauth.get_settings", return_value=mock_settings), \
-             patch("src.oauth.validate_token_from_control_db", side_effect=Exception("DB down")), \
-             patch("src.oauth.validate_client_token") as mock_legacy:
-            result = _validate_mcp_token("some-token")
-
-        assert result is None
-        mock_legacy.assert_not_called()
-
-    def test_legacy_allowed_when_no_control_db(self):
-        """No control_db_name → legacy token validation is permitted."""
-        from src.oauth import _validate_mcp_token
-
-        mock_settings = MagicMock()
-        mock_settings.control_db_name = ""
-
-        legacy_result = {"client_email": "user@example.com"}
-
-        with patch("src.oauth.get_settings", return_value=mock_settings), \
-             patch("src.oauth.validate_client_token", return_value=legacy_result):
-            result = _validate_mcp_token("some-token")
-
-        assert result == "user@example.com"
-
-    def test_valid_control_db_token_returns_email(self):
-        """Valid token in control DB → return email."""
-        from src.oauth import _validate_mcp_token
-
-        mock_settings = MagicMock()
-        mock_settings.control_db_name = "my-control-db"
-
-        with patch("src.oauth.get_settings", return_value=mock_settings), \
-             patch("src.oauth.validate_token_from_control_db",
-                   return_value={"user_email": "user@example.com"}):
-            result = _validate_mcp_token("some-token")
-
-        assert result == "user@example.com"
-
-    def test_empty_token_returns_none(self):
-        """Empty string token → return None immediately."""
-        from src.oauth import _validate_mcp_token
-        assert _validate_mcp_token("") is None
-        assert _validate_mcp_token(None) is None
 
 
 class TestMcpTokenFailClosed:

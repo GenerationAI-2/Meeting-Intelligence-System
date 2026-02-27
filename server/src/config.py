@@ -18,35 +18,14 @@ class Settings(BaseSettings):
     azure_tenant_id: str = Field(default="", validation_alias="API_AZURE_TENANT_ID")
     azure_client_id: str = Field(default="", validation_alias="API_AZURE_CLIENT_ID")  # The API App Registration Client ID (b5a8...)
     
-    # MCP Authentication: tokens are now stored in the ClientToken database table.
-    # Use manage_tokens.py CLI to create/revoke/rotate tokens.
-    # Legacy env var kept temporarily for migration — will be removed after migration.
-    mcp_auth_tokens: str = ""
-
-    # User whitelist (comma-separated emails)
+    # User whitelist (comma-separated emails) — only used in legacy mode (no control DB)
     allowed_users: str = ""
 
     # CORS origins (comma-separated URLs)
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
-    # OAuth 2.1 settings (for ChatGPT MCP support)
-    jwt_secret: str = ""  # Required for OAuth - generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-    jwt_secret_previous: str = ""  # Optional — set to old secret during key rotation (keep for 30 days to cover refresh token lifetime)
-    oauth_base_url: str = ""  # Set to deployed URL, e.g., https://meeting-intelligence-team.happystone-42529ebe.australiaeast.azurecontainerapps.io
-    oauth_allowed_redirect_domains: str = ""  # Comma-separated domains for OAuth redirect URIs. Default: claude.ai,claude.com,chatgpt.com,openai.com,localhost,127.0.0.1
-
     # Observability (optional but recommended for production)
     applicationinsights_connection_string: str = ""  # Get from Azure Portal > Application Insights > Connection String
-
-    def get_mcp_auth_tokens_dict(self) -> dict[str, str]:
-        """Parse legacy MCP_AUTH_TOKENS env var for migration only."""
-        if not self.mcp_auth_tokens:
-            return {}
-        try:
-            import json
-            return json.loads(self.mcp_auth_tokens)
-        except Exception:
-            return {}
 
     def get_allowed_users_list(self) -> list[str]:
         """Get list of allowed user emails (lowercased)."""

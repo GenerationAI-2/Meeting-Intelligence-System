@@ -37,7 +37,6 @@ def run_http():
     from .admin import admin_router
     from .config import get_settings
     from .database import validate_client_token, validate_token_from_control_db
-    from .oauth import router as oauth_router, validate_oauth_token, init_oauth_clients
 
     settings = get_settings()
 
@@ -200,17 +199,11 @@ def run_http():
     # Lifespan for MCP session management
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
-        # Fail fast if JWT_SECRET is not configured
-        from .oauth import get_jwt_secret
-        get_jwt_secret()
-
         # Initialize engine registry for multi-database support
         if settings.azure_sql_server:
             _db_module.engine_registry = EngineRegistry(settings.azure_sql_server)
             logger.info("Engine registry initialized for server: %s", settings.azure_sql_server)
 
-        # Load OAuth clients from database into memory on startup
-        init_oauth_clients()
         async with mcp.session_manager.run():
             yield
 
@@ -478,20 +471,10 @@ def run_http():
             auth = request.headers.get("Authorization", "")
             if auth.startswith("Bearer "):
                 bearer_token = auth[7:]
-                # First check if it's an MCP client token
                 email = await validate_mcp_token(bearer_token)
                 if email:
                     token = bearer_token
                     set_mcp_user(email)
-                else:
-                    # Try validating as OAuth token (for ChatGPT)
-                    oauth_payload = validate_oauth_token(bearer_token)
-                    if oauth_payload:
-                        # Valid OAuth token — attribute to OAuth client_id
-                        oauth_email = f"oauth:{oauth_payload.get('sub', 'unknown')}"
-                        set_mcp_user(oauth_email)
-                        _resolve_workspace_for_mcp(oauth_email)
-                        return await call_next(request)
 
         if not token:
             return Response("Unauthorized", status_code=401)
@@ -513,9 +496,6 @@ def run_http():
     for route in sse_app.routes:
         app.routes.append(route)
 
-    # Mount OAuth endpoints (for ChatGPT support)
-    app.include_router(oauth_router)
-
     # Mount Admin API (workspace CRUD + member management)
     app.include_router(admin_router, prefix="/api/admin")
 
@@ -527,7 +507,7 @@ def run_http():
     # Health probes (defined after route appends to ensure proper ordering)
     @app.get("/health")
     def health():
-        return {"status": "healthy", "transports": ["sse", "streamable-http"], "oauth": True}
+        return {"status": "healthy", "transports": ["sse", "streamable-http"]}
 
     @app.get("/health/live")
     def health_live():
@@ -569,7 +549,7 @@ def run_http():
             return FileResponse(os.path.join(static_dir, "index.html"))
 
     logger.info("Starting Meeting Intelligence Server")
-    logger.info("Endpoints: MCP=/mcp (Copilot), SSE=/sse (Claude), OAuth=/oauth/*, API=/api/*, UI=/")
+    logger.info("Endpoints: MCP=/mcp (Copilot), SSE=/sse (Claude), API=/api/*, UI=/")
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
