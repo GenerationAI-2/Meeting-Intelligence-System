@@ -23,7 +23,7 @@ async def run_stdio():
 
 
 def run_http():
-    """Run MCP server over SSE + Streamable HTTP + REST API."""
+    """Run MCP server over Streamable HTTP + REST API."""
     import uvicorn
     import os
     from fastapi import FastAPI
@@ -192,9 +192,8 @@ def run_http():
             _token_cache.pop(token_hash, None)
         return None
 
-    # Create MCP transport apps first (this creates the session manager)
+    # Create MCP transport app (this creates the session manager)
     streamable_http_app = mcp.streamable_http_app()
-    sse_app = mcp.sse_app()
 
     # Lifespan for MCP session management
     @contextlib.asynccontextmanager
@@ -216,7 +215,7 @@ def run_http():
     app = FastAPI(title="Meeting Intelligence", lifespan=lifespan)
 
     # Payload size limit (1MB) — reject oversized requests before processing
-    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking SSE/streaming
+    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking streaming
     MAX_PAYLOAD_BYTES = 1 * 1024 * 1024
 
     class PayloadSizeLimitMiddleware:
@@ -245,13 +244,12 @@ def run_http():
     app.add_middleware(PayloadSizeLimitMiddleware)
 
     # Rate limiting middleware — tiered per endpoint category
-    # MCP: 120/min per-token (rapid tool calls), OAuth: 20/min per-IP,
-    # API: 60/min per-IP, health/well-known: exempt
-    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking SSE/streaming
+    # MCP: 120/min per-token (rapid tool calls), API: 60/min per-IP,
+    # health/well-known: exempt
+    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking streaming
     class RateLimitMiddleware:
         TIERS = {
             "mcp":   (120, 60),  # 120 req/min — MCP tool calls
-            "oauth": (20, 60),   # 20 req/min — auth endpoints
             "api":   (60, 60),   # 60 req/min — REST API
         }
         EXEMPT_PREFIXES = ("/health", "/.well-known")
@@ -265,28 +263,20 @@ def run_http():
         def _classify(self, path: str):
             if any(path.startswith(p) for p in self.EXEMPT_PREFIXES):
                 return None
-            if path.startswith("/mcp") or path.startswith("/sse") or path.startswith("/messages"):
+            if path.startswith("/mcp"):
                 return "mcp"
-            if path.startswith("/oauth"):
-                return "oauth"
             if path.startswith("/api"):
                 return "api"
             return None
 
         def _get_client_key(self, scope, headers_dict: dict, tier: str) -> str:
             if tier == "mcp":
-                # Extract token from query string
-                from urllib.parse import parse_qs
-                qs = parse_qs(scope.get("query_string", b"").decode())
-                token = (qs.get("token", [""])[0]
-                         or headers_dict.get(b"x-api-key", b"").decode()
-                         or "")
-                auth_header = headers_dict.get(b"authorization", b"").decode()
-                if not token and auth_header.startswith("Bearer "):
-                    token = auth_header[7:]
-                path = scope.get("path", "")
-                if not token and path.startswith("/mcp/"):
-                    token = path[5:]
+                # Extract token from headers for per-token rate limiting
+                token = headers_dict.get(b"x-api-key", b"").decode() or ""
+                if not token:
+                    auth_header = headers_dict.get(b"authorization", b"").decode()
+                    if auth_header.startswith("Bearer "):
+                        token = auth_header[7:]
                 if token:
                     return f"mcp:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
             client = scope.get("client")
@@ -362,7 +352,7 @@ def run_http():
     app.add_middleware(RateLimitMiddleware)
 
     # Security headers middleware
-    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking SSE/streaming
+    # Pure ASGI middleware (not BaseHTTPMiddleware) to avoid breaking streaming
     _SECURITY_HEADERS = [
         (b"x-content-type-options", b"nosniff"),
         (b"x-frame-options", b"DENY"),
@@ -399,7 +389,7 @@ def run_http():
 
     app.add_middleware(SecurityHeadersMiddleware)
 
-    # CORS - include mcp-session-id header
+    # CORS — mcp-session-id for Streamable HTTP session management
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.get_cors_origins_list(),
@@ -420,8 +410,8 @@ def run_http():
     async def mcp_auth_middleware(request, call_next):
         path = request.url.path
 
-        # Only check auth for MCP endpoints
-        if not (path.startswith("/sse") or path.startswith("/mcp")):
+        # Only check auth for MCP endpoint
+        if not path.startswith("/mcp"):
             return await call_next(request)
 
         # Origin header validation per MCP spec 2025-11-25.
@@ -446,40 +436,17 @@ def run_http():
                     }
                 )
 
+        # Extract token from headers (Bearer or X-API-Key)
         token = None
-
-        # Check for path-based token: /mcp/{token} (for Copilot)
-        if path.startswith("/mcp/") and len(path) > 5:
-            path_token = path[5:]  # Extract token from path
-            email = await validate_mcp_token(path_token)
-            if email:
-                token = path_token
-                set_mcp_user(email)
-                # Rewrite path to /mcp for the route handler
-                request.scope["path"] = "/mcp"
-
-        # Check token in query param
-        if not token:
-            token = request.query_params.get("token")
-
-        # Check X-API-Key header
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
         if not token:
             token = request.headers.get("X-API-Key")
-
-        # Check Authorization header (Bearer token)
-        if not token:
-            auth = request.headers.get("Authorization", "")
-            if auth.startswith("Bearer "):
-                bearer_token = auth[7:]
-                email = await validate_mcp_token(bearer_token)
-                if email:
-                    token = bearer_token
-                    set_mcp_user(email)
 
         if not token:
             return Response("Unauthorized", status_code=401)
 
-        # For query param / X-API-Key tokens, resolve email if not already set
         email = await validate_mcp_token(token)
         if not email:
             return Response("Unauthorized", status_code=401)
@@ -488,12 +455,8 @@ def run_http():
 
         return await call_next(request)
 
-    # Mount MCP transports
-    # FastMCP apps have their own routes (/mcp for HTTP, /sse+/messages for SSE)
-    # Include routes from both apps directly
+    # Mount MCP transport (Streamable HTTP only — /mcp endpoint)
     for route in streamable_http_app.routes:
-        app.routes.append(route)
-    for route in sse_app.routes:
         app.routes.append(route)
 
     # Mount Admin API (workspace CRUD + member management)
@@ -507,7 +470,7 @@ def run_http():
     # Health probes (defined after route appends to ensure proper ordering)
     @app.get("/health")
     def health():
-        return {"status": "healthy", "transports": ["sse", "streamable-http"]}
+        return {"status": "healthy", "transports": ["streamable-http"]}
 
     @app.get("/health/live")
     def health_live():
@@ -549,7 +512,7 @@ def run_http():
             return FileResponse(os.path.join(static_dir, "index.html"))
 
     logger.info("Starting Meeting Intelligence Server")
-    logger.info("Endpoints: MCP=/mcp (Copilot), SSE=/sse (Claude), API=/api/*, UI=/")
+    logger.info("Endpoints: MCP=/mcp, API=/api/*, UI=/")
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
 

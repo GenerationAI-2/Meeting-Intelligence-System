@@ -9,7 +9,7 @@ from mcp.types import ToolAnnotations
 from pydantic import ValidationError
 from .workspace_context import WorkspaceContext, make_legacy_context
 from . import database as _db_module
-from .database import _get_engine, call_with_retry, get_db_for
+from .database import _get_engine, call_with_retry
 from .tools import meetings, actions, decisions, workspaces
 from .audit import audit_data_operation
 from .schemas import (
@@ -18,8 +18,7 @@ from .schemas import (
     DecisionCreate, DecisionId, DecisionListFilter,
 )
 
-# Tool annotations for ChatGPT compatibility
-# ChatGPT requires these hints to properly classify tools
+# Tool annotations per MCP spec — hints for client tool classification
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
 WRITE = ToolAnnotations(readOnlyHint=False)
 DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)

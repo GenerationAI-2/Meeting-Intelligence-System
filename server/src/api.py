@@ -160,14 +160,6 @@ def _get_engine_for_ctx(ctx: WorkspaceContext):
 
 
 # ============================================================================
-# MCP SSE ENDPOINT (For Claude.ai)
-# ============================================================================
-
-# SSE Endpoints are handled in main.py when running with --http
-# This ensures separation of concerns: api.py is REST, main.py adds MCP transport.
-
-
-# ============================================================================
 # REST ENDPOINTS (Web UI)
 # ============================================================================
 
