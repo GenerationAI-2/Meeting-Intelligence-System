@@ -1,6 +1,6 @@
 # Meeting Intelligence System - Agent Context
 
-**Last Updated:** 2026-02-23
+**Last Updated:** 2026-02-27
 **Project Status:** Phase 3 IN PROGRESS — Shape finalised 23 Feb
 **Owner:** Caleb Lucas
 
@@ -147,8 +147,9 @@ web/src/
 - Phase 3: IN PROGRESS (12 Feb 2026 –). Shape finalised 23 Feb. See Second Brain `2-build/Planning_MI Phase 3 Shape_Final_23FEB26.docx`. Two-wave delivery: Wave 1 (bugs, search, Bicep, beta agreement) then Wave 2 (RBAC, schema endpoint, web UI edit, transcription guide).
 
 **What's working:**
-- 17 MCP tools for meetings (6), actions (7), decisions (4)
-- **P7 workspace architecture deployed to battletest** — multi-database isolation, RBAC (viewer/member/chair + org_admin), admin API, 229 tests passing
+- 22 MCP tools: meetings (6), actions (8), decisions (5), schema (1), workspace (1), plus self-service token endpoints (`/api/me/tokens`)
+- **P7 workspace architecture MERGED to main** — multi-database isolation, RBAC (viewer/member/chair + org_admin), admin API, 229 tests passing
+- **Self-service PAT generation** — Settings page with generate/list/revoke. Three provisioning states. User profile dropdown with dynamic connection URLs.
 - 6 database tables per workspace: Meeting, Action, Decision, ClientToken, OAuthClient, RefreshTokenUsage + `_MigrationHistory` tracking table
 - Control database tables: users, workspaces, workspace_members, audit_log
 - 4 transport methods: Streamable HTTP (`/mcp`), SSE (`/sse`), stdio (local), REST (`/api/*`)
@@ -161,7 +162,7 @@ web/src/
   - OAuth 2.1 with DCR + PKCE for ChatGPT (hardened: redirect URI allowlist + token-gated consent + origin-based resource indicator matching + refresh token rotation + token revocation endpoint)
 - DB-backed client tokens with SHA256 hashing, 5-min in-memory cache
 - Connection pooling (QueuePool) with retry-on-transient decorator (17 Azure SQL error codes)
-- Pydantic validation on all 17 MCP tools with field limits
+- Pydantic validation on all MCP tools with field limits
 - Tiered rate limiting: MCP 120/min per-token, OAuth 20/min per-IP, API 60/min per-IP. Returns 429 with Retry-After header.
 - Attendee and tag filtering on meetings (MCP only; web UI has no attendee filter)
 - Transcript storage and search (keyword search with snippet extraction)
@@ -194,40 +195,15 @@ web/src/
   - Pre-deploy vulnerability scanning via `infra/audit.sh`
 - **Infrastructure as Code:** Bicep templates (6 modules) managing Container App, SQL, Key Vault, monitoring, identity/RBAC
   - Note: team/demo are pre-Bicep environments — use `az containerapp update` for image deploys, deploy Bicep modules (e.g., alerts) standalone. Full Bicep deploy is for new environments only (e.g., marshall).
-- **Documentation package** (14 polished docs + 2 drafts in Second Brain `3-delivery/`):
-  - system-overview, user-guide, platform-setup, architecture, security
-  - deployment-guide, admin-database, user-admin, cost-summary, troubleshooting
-  - reference-architecture, client-offering, data-sovereignty-position, backup-restore-runbook
-  - Drafts: marshall-handover-draft.md, Reference Architecture .docx
-- **Working docs in repo** (`/docs/`, 19 files): ADRs, deployment briefs, implementation specs, audit reports, stress test results, best practice comparison, incident playbook, offboarding runbook, SLA/RPO/RTO
+- **Documentation:** 14 legacy docs archived to `3-delivery/_archive/` (all pre-P7). Docs wave rewrite planned (DOC1-DOC4). ADRs and working docs in repo `/docs/`.
 
-**Known issues:**
-- ~~Cold start delay~~ measured at 209ms TTFB (D14) — not an issue
-- No email notifications for actions
-- ChatGPT requires connector to be manually enabled in Tools menu per chat
-- `ExpandableText` component exists in web UI but is unused (leftover from earlier approach)
-- `meetingsApi.search()` defined in `web/src/services/api.js` but not used in any UI component
-- Marshall pending D16 rollout — migration 003 + ChatGPT re-auth required
-- CI/CD not automated (manual deploy with pre-deploy audit script)
+**Known issues:** See `docs/backlog.md` for full list. Key items: Marshall pending D16 rollout, no CI/CD, ChatGPT requires manual connector enable per chat.
 
 ---
 
-## Technical Debt
+## Backlog
 
-- [ ] No integration tests or CI — `test_validation.py` has 60 unit tests for schema validation, but no integration tests, and no CI pipeline to run them
-- [ ] Hardcoded `system@generationai.co.nz` for MCP user attribution (`mcp_server.py:34`)
-- [ ] Log Analytics workspaces created per environment (could consolidate)
-- [ ] Legacy `meeting-intelligence-v2-rg` resource group still exists (can delete)
-- [ ] OAuth 2.1 auth codes stored in-memory — lost on container restart (clients persist to DB via OAuthClient table, but pending auth codes do not)
-- [ ] Remove legacy `validate_client_token` fallback — all new envs use control DB; legacy path is dead code that caused the `mi-genai` 500 incident
-
-## Ideas Bucket
-
-- [ ] **Self-service MCP token generation in web UI** — User logs in via Azure AD, clicks "Generate MCP Token" on profile/settings page, sees plaintext once with copy button. Eliminates insecure token distribution via email/Teams. ~2-3 hours. Needs: `POST/GET/DELETE /api/profile/token(s)` endpoints + React settings page.
-- [ ] **ChatGPT MCP support for workspace mode** — OAuth 2.1 flow creates `oauth:<client_id>` identity with no workspace memberships → 403. Need to map OAuth clients to workspace members (e.g., link OAuth client to a user email during DCR, or auto-create membership on first auth). Required for Eva/ChatGPT users.
-- [ ] **Workspace switch should re-fetch page data** — Changing workspace in the picker doesn't trigger a data refresh. User has to hard refresh to see the new workspace's content. Fix: listen for workspace change in React context and re-trigger data fetches.
-- [ ] **Auto-refresh / polling for web UI** — Content goes stale when changes are made via MCP or by other users. Add periodic polling (e.g., every 30-60s) or optimistic refresh on tab focus. Keeps actions, meetings, decisions up to date without manual refresh.
-- [ ] **Email notifications for overdue actions** — flagged as known issue since Phase 1
+Single source of truth for all known issues, tech debt, future ideas, and security hardening: **`docs/backlog.md`**. Do not duplicate items here.
 
 ---
 
@@ -446,8 +422,10 @@ If you don't have access to Second Brain folder:
 | Category | Tools |
 |----------|-------|
 | Meetings | list_meetings, get_meeting, search_meetings, create_meeting, update_meeting, delete_meeting |
-| Actions | list_actions, get_action, create_action, update_action, complete_action, park_action, delete_action |
-| Decisions | list_decisions, get_decision, create_decision, delete_decision |
+| Actions | list_actions, get_action, search_actions, create_action, update_action, complete_action, park_action, delete_action |
+| Decisions | list_decisions, get_decision, search_decisions, create_decision, delete_decision |
+| Schema | get_schema |
+| Workspace | switch_workspace |
 
 ---
 
@@ -535,7 +513,7 @@ ls "2-build/"*.docx 2>/dev/null
 ### This File Updates (if applicable)
 
 - Learned something that failed? → Add to "What's Been Tried & Failed"
-- Added technical debt? → Add to Technical Debt section
+- Added technical debt? → Add to `docs/backlog.md`
 - Changed architecture or features? → Update relevant sections
 
 ---
