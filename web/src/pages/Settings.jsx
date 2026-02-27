@@ -312,14 +312,14 @@ function Settings() {
                         <h3 className="font-medium text-gray-900 mb-1">Claude Desktop (SSE)</h3>
                         <p className="mb-1">Add to your Claude Desktop config:</p>
                         <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
-                            {`"url": "https://YOUR-DOMAIN/sse?token=YOUR_TOKEN"`}
+                            {`"url": "${window.location.origin}/sse?token=YOUR_TOKEN"`}
                         </code>
                     </div>
                     <div>
                         <h3 className="font-medium text-gray-900 mb-1">Copilot Studio</h3>
                         <p className="mb-1">Use the path-based URL:</p>
                         <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
-                            {`https://YOUR-DOMAIN/mcp/YOUR_TOKEN`}
+                            {`${window.location.origin}/mcp/YOUR_TOKEN`}
                         </code>
                     </div>
                     <div>
