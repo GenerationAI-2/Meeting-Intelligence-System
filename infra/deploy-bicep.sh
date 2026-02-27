@@ -8,7 +8,7 @@ set -euo pipefail
 # Greenfield environments:  Full end-to-end provisioning (two-phase Bicep deploy
 #   with automated AcrPull, Key Vault RBAC, CORS, SPA redirect URIs, health check)
 # Existing Bicep environments:  Image + infra update via single Bicep deploy
-# Pre-Bicep environments (team, demo):  Detected and rejected — use deploy-all.sh
+# All environments are Bicep-managed (team/demo decommissioned Feb 2026)
 #
 # Usage:
 #   ./infra/deploy-bicep.sh <environment-name> [image-tag]
@@ -31,25 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_NAME="mi-${ENV}"
 ACR_NAME="meetingintelacr20260116"
 
-# --- Pre-Bicep environment guard ---
-# team and demo were created before Bicep IaC. Full Bicep deploy creates NEW
-# per-env infra instead of updating existing. These must use deploy-all.sh
-# or direct `az containerapp update --image` for image-only updates.
-PRE_BICEP_ENVS=("team" "demo")
-for pre in "${PRE_BICEP_ENVS[@]}"; do
-    if [ "$ENV" = "$pre" ]; then
-        echo "ERROR: '${ENV}' is a pre-Bicep environment."
-        echo "Full Bicep deploy would create new per-env infra, not update existing."
-        echo ""
-        echo "For image-only updates, use:"
-        echo "  ./infra/deploy-all.sh <image-tag>"
-        echo ""
-        echo "Or update directly:"
-        echo "  az containerapp update -n <app-name> -g ${RESOURCE_GROUP} \\"
-        echo "    --image ${ACR_NAME}.azurecr.io/<image>:<tag>"
-        exit 1
-    fi
-done
+# All environments are Bicep-managed (team/demo decommissioned Feb 2026)
 
 echo "=== Deploying Meeting Intelligence: ${ENV} ==="
 echo "Resource Group: ${RESOURCE_GROUP}"

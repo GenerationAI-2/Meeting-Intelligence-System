@@ -40,10 +40,10 @@ done
 # === ENVIRONMENT ORDER ===
 # Internal environments deploy first (canary).
 # Client environments deploy after internal passes.
-INTERNAL_ENVS=("team")
-CLIENT_ENVS=("marshall")
+INTERNAL_ENVS=("genai")
+CLIENT_ENVS=("testing-instance" "marshall")
 # Add new environments here:
-# CLIENT_ENVS=("marshall" "client2" "client3")
+# CLIENT_ENVS=("testing-instance" "marshall" "client2")
 
 ACR_NAME="meetingintelacr20260116"
 

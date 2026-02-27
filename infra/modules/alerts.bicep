@@ -147,8 +147,8 @@ resource alertRestarts 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 }
 
 // 4. Replica count zero — severity 1 (Error)
-// Only enabled for environments with minReplicas > 0 (e.g. Marshall).
-// For team/demo, scale-to-zero is expected behaviour.
+// Only enabled for environments with minReplicas > 0.
+// Scale-to-zero environments skip this alert.
 resource alertReplicaZero 'Microsoft.Insights/metricAlerts@2018-03-01' = if (minReplicas > 0) {
   name: 'mi-${environmentName}-replica-zero'
   location: 'global'

@@ -26,8 +26,8 @@ Must complete before handing a client their login.
 |---|-------------|----------|-------|
 | DOC1 | Quick Start Guide — connect tools, workflow + prompt examples, Fireflies setup, self-service tokens, skill reference | NOW | Single client-facing doc. Replaces P9, P10, P14. |
 | DOC2 | Technical Architecture Brief — for Craig's team, 3-4 pages | NOW | Replaces D1, D3. |
-| DOC3 | Client Deploy Runbook — end-to-end deploy checklist | NOW | Consolidates existing fragments. |
-| DOC4 | Break-glass / Ops Runbook — rollback, PITR, token revocation, escalation | NOW | One-pager. Incl. cache flush note (revoked token valid up to 5min). |
+| DOC3 | Client Deploy Runbook — end-to-end deploy checklist | DONE | `docs/DOC3-client-deploy-runbook.md`. Needs Caleb review. |
+| DOC4 | Break-glass / Ops Runbook — rollback, PITR, token revocation, escalation | DONE | `docs/DOC4-breakglass-ops-runbook.md`. Needs Caleb review + escalation contacts. |
 
 ### Verification — NOT STARTED
 

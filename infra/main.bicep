@@ -12,7 +12,7 @@ targetScope = 'resourceGroup'
 
 // === PARAMETERS ===
 
-@description('Environment name (e.g., team, demo, client-name)')
+@description('Environment name (e.g., genai, marshall, testing-instance)')
 param environmentName string
 
 @description('Azure region')
