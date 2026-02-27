@@ -29,8 +29,7 @@ Each client environment is a self-contained resource group with no cross-client 
 | Log Analytics | `log-mi-prod-<client>` | PerGB2018, 30-day retention |
 | Application Insights | `appi-mi-prod-<client>` | Linked to Log Analytics |
 | Action Group | `ag-mi-prod-<client>` | Email alerts |
-
-**Shared resource (cross-RG):** Azure Container Registry `meetingintelacr20260116` in `meeting-intelligence-v2-rg`. All client containers pull images from this single ACR.
+| Container Registry | `acr-mi-prod-<client>` | Basic tier, admin disabled, managed identity pull |
 
 **Estimated cost:** ~$20-30 AUD/month per client environment (always-on, Basic SQL tier).
 
@@ -74,11 +73,10 @@ Each client environment is a self-contained resource group with no cross-client 
 │  └──────────────┘  └────────────────────────┘      │
 └─────────────────────────────────────────────────────┘
 
-External:
-┌──────────────────┐
-│ ACR (shared)     │◀── AcrPull role (MI identity)
-│ meetingintelacr  │
-└──────────────────┘
+│  ┌──────────────────┐                                │
+│  │ Container        │◀── AcrPull role (MI identity)  │
+│  │ Registry (ACR)   │                                │
+│  └──────────────────┘                                │
 ```
 
 ---
@@ -91,7 +89,7 @@ No shared passwords anywhere in the system. All service-to-service auth uses man
 
 **Container App → Key Vault:** System-assigned managed identity with Key Vault Secrets User RBAC role. Secrets mounted as environment variables at runtime.
 
-**Container App → ACR:** System-assigned managed identity with AcrPull role (cross-RG assignment).
+**Container App → ACR:** System-assigned managed identity with AcrPull role.
 
 **End Users → Web UI:** Azure AD OAuth 2.0 via MSAL. App Registration per client with SPA redirect URIs. Token version v2 required. Access controlled via workspace memberships in control DB.
 
@@ -163,7 +161,7 @@ All infrastructure is codified in Bicep — a full environment can be rebuilt fr
 5. Craig's team runs security standup in parallel (Sentinel, SOC, ITSM — ~7 days)
 6. Client receives web UI URL + MCP connection instructions
 
-**Image management:** Single ACR, timestamp-tagged images (`mi-<env>:20260227120000`). All client environments can run different image versions. Rollback by activating a previous Container App revision (<5 min).
+**Image management:** Per-client ACR, timestamp-tagged images (`mi-<env>:20260227120000`). Rollback by activating a previous Container App revision (<5 min).
 
 **What Craig's team needs to provide per client:**
 - Subscription with appropriate management groups

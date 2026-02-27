@@ -84,13 +84,15 @@ The script runs 6 phases:
 
 Three things the script cannot automate:
 
-### 3a. Admin Consent (requires Global Admin)
+### 3a. API Consent
+
+For the Generation AI subscription, user consent has been sufficient — each user approves the app permissions on first login. For other client tenants, this may require admin consent depending on their Azure AD policies:
 
 ```
 Azure Portal → App Registrations → <Client ID> → API Permissions → Grant admin consent
 ```
 
-This must be done by someone with Global Admin role on the Azure AD tenant. Without it, web UI login will fail with a permissions error.
+Check the client's tenant consent settings. If user consent is disabled tenant-wide, a Global Admin will need to grant consent or the web UI login will fail with a permissions error.
 
 ### 3b. Commit the Parameter File
 
@@ -188,23 +190,6 @@ Auth: Azure AD login (users must be workspace members in control DB)
 
 ---
 
-## Known Gotchas
-
-These are documented failures from battle-testing and real deployments. If you hit them, here's the fix:
-
-| Issue | Symptom | Fix |
-|-------|---------|-----|
-| Key Vault RBAC propagation | Container crash-loops with `secret not found` | Wait 5-10 min after first deploy, then force a new revision: `az containerapp update -n mi-<env> -g <rg> --set-env-vars FORCE_RESTART=$(date +%s)` |
-| AcrPull role not assigned | Image pull failure on first deploy | `az role assignment create --assignee <MI-principal-id> --role AcrPull --scope <ACR-resource-id>` |
-| SPA redirect URI mismatch | AADSTS50011 error on web UI login | Register BOTH `https://<FQDN>` AND `https://<FQDN>/auth/callback` as SPA redirect URIs |
-| Token version v1 vs v2 | 401 "Invalid issuer" on web UI login | Phase 0 should handle this. If not: App Registration manifest → set `accessTokenAcceptedVersion` to `2` |
-| Container readiness probe caches | Health probe passes but app returns 500 | Restart the revision: `az containerapp revision restart -n <app> -g <rg> --revision <rev>` |
-| Provisioning lock after killed CLI | All `az containerapp` commands fail for ~30 min | Wait. Azure releases the lock automatically. |
-| Email mismatch | User gets full admin access (RBAC bypass) | Verify Azure AD emails match exactly what's seeded in control DB |
-| Missing VITE build args | Web UI shows placeholder tenant IDs | Rebuild image with all `--build-arg VITE_*` flags (see CLAUDE.md) |
-
----
-
 ## Rollback
 
 If the deployment is broken and can't be fixed quickly:
@@ -241,6 +226,25 @@ While you run the technical deployment, Craig's team runs their security standup
 - Management groups + RBAC at subscription level
 
 Tell clients **2 weeks** total lead time. Our Bicep deployment runs in the first day; Craig's security controls fill the rest.
+
+---
+
+---
+
+## Known Gotchas
+
+Documented failures from battle-testing and real deployments. Internal reference — don't share with clients.
+
+| Issue | Symptom | Fix |
+|-------|---------|-----|
+| Key Vault RBAC propagation | Container crash-loops with `secret not found` | Wait 5-10 min after first deploy, then force a new revision: `az containerapp update -n mi-<env> -g <rg> --set-env-vars FORCE_RESTART=$(date +%s)` |
+| AcrPull role not assigned | Image pull failure on first deploy | `az role assignment create --assignee <MI-principal-id> --role AcrPull --scope <ACR-resource-id>` |
+| SPA redirect URI mismatch | AADSTS50011 error on web UI login | Register BOTH `https://<FQDN>` AND `https://<FQDN>/auth/callback` as SPA redirect URIs |
+| Token version v1 vs v2 | 401 "Invalid issuer" on web UI login | Phase 0 should handle this. If not: App Registration manifest → set `accessTokenAcceptedVersion` to `2` |
+| Container readiness probe caches | Health probe passes but app returns 500 | Restart the revision: `az containerapp revision restart -n <app> -g <rg> --revision <rev>` |
+| Provisioning lock after killed CLI | All `az containerapp` commands fail for ~30 min | Wait. Azure releases the lock automatically. |
+| Email mismatch | User gets full admin access (RBAC bypass) | Verify Azure AD emails match exactly what's seeded in control DB |
+| Missing VITE build args | Web UI shows placeholder tenant IDs | Rebuild image with all `--build-arg VITE_*` flags (see CLAUDE.md) |
 
 ---
 
