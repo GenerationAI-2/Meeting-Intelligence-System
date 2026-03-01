@@ -4,8 +4,11 @@
 // Creates metric alerts for Container App health + a log alert for auth failure spikes.
 // Sends notifications via email action group.
 
-@description('Environment name')
-param environmentName string
+@description('Action group name')
+param actionGroupName string
+
+@description('Container App name (used for alert name prefixes)')
+param containerAppName string
 
 @description('Azure region')
 param location string
@@ -28,7 +31,7 @@ param alertEmail string = 'caleb.lucas@generationai.co.nz'
 // === ACTION GROUP ===
 
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
-  name: 'mi-${environmentName}-alerts'
+  name: actionGroupName
   location: 'global'
   tags: tags
   properties: {
@@ -48,7 +51,7 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
 
 // 1. 5xx error rate — severity 1 (Error)
 resource alert5xx 'Microsoft.Insights/metricAlerts@2018-03-01' = {
-  name: 'mi-${environmentName}-5xx-errors'
+  name: '${containerAppName}-5xx-errors'
   location: 'global'
   tags: tags
   properties: {
@@ -86,7 +89,7 @@ resource alert5xx 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 
 // 2. Response time — severity 2 (Warning)
 resource alertResponseTime 'Microsoft.Insights/metricAlerts@2018-03-01' = {
-  name: 'mi-${environmentName}-response-time'
+  name: '${containerAppName}-response-time'
   location: 'global'
   tags: tags
   properties: {
@@ -117,7 +120,7 @@ resource alertResponseTime 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 
 // 3. Excessive restarts — severity 2 (Warning)
 resource alertRestarts 'Microsoft.Insights/metricAlerts@2018-03-01' = {
-  name: 'mi-${environmentName}-restarts'
+  name: '${containerAppName}-restarts'
   location: 'global'
   tags: tags
   properties: {
@@ -150,7 +153,7 @@ resource alertRestarts 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 // Only enabled for environments with minReplicas > 0.
 // Scale-to-zero environments skip this alert.
 resource alertReplicaZero 'Microsoft.Insights/metricAlerts@2018-03-01' = if (minReplicas > 0) {
-  name: 'mi-${environmentName}-replica-zero'
+  name: '${containerAppName}-replica-zero'
   location: 'global'
   tags: tags
   properties: {
@@ -181,7 +184,7 @@ resource alertReplicaZero 'Microsoft.Insights/metricAlerts@2018-03-01' = if (min
 
 // 5. High CPU — severity 2 (Warning)
 resource alertCpu 'Microsoft.Insights/metricAlerts@2018-03-01' = {
-  name: 'mi-${environmentName}-high-cpu'
+  name: '${containerAppName}-high-cpu'
   location: 'global'
   tags: tags
   properties: {
@@ -212,7 +215,7 @@ resource alertCpu 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 
 // 6. High memory — severity 2 (Warning)
 resource alertMemory 'Microsoft.Insights/metricAlerts@2018-03-01' = {
-  name: 'mi-${environmentName}-high-memory'
+  name: '${containerAppName}-high-memory'
   location: 'global'
   tags: tags
   properties: {
@@ -246,12 +249,12 @@ resource alertMemory 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 // 7. Auth failure spike — severity 1 (Error)
 // Detects potential brute force: >20 401 responses in 5 minutes.
 resource alertAuthFailure 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
-  name: 'mi-${environmentName}-auth-failure-spike'
+  name: '${containerAppName}-auth-failure-spike'
   location: location
   tags: tags
   kind: 'LogAlert'
   properties: {
-    displayName: 'Auth Failure Spike - ${environmentName}'
+    displayName: 'Auth Failure Spike - ${containerAppName}'
     description: 'Potential brute force: >20 401 responses in 5 minutes'
     enabled: true
     severity: 1

@@ -10,8 +10,11 @@
 //   cross-RG role assignment in Bicep complex. Instead, deploy-bicep.sh Phase 4
 //   assigns AcrPull via CLI after the Container App is created.
 
-@description('Environment name')
-param environmentName string
+@description('Container App name')
+param containerAppName string
+
+@description('Container App Environment name')
+param containerAppEnvName string
 
 @description('Azure region')
 param location string
@@ -51,9 +54,6 @@ param minReplicas int = 0
 @description('Key Vault secret URI for App Insights connection string')
 param appInsightsConnectionStringSecretUri string
 
-@description('Key Vault secret URI for JWT secret')
-param jwtSecretUri string
-
 @description('Control database name (empty = workspace features disabled)')
 param controlDbName string = ''
 
@@ -63,7 +63,7 @@ param logAnalyticsWorkspaceId string
 // === CONTAINER APPS ENVIRONMENT ===
 
 resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'mi-${environmentName}-env'
+  name: containerAppEnvName
   location: location
   tags: tags
   properties: {
@@ -79,10 +79,8 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 
 // === CONTAINER APP ===
 
-var appName = 'mi-${environmentName}'
-
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
-  name: appName
+  name: containerAppName
   location: location
   tags: tags
   identity: {
@@ -106,11 +104,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       secrets: [
         {
-          name: 'jwt-secret'
-          keyVaultUrl: jwtSecretUri
-          identity: 'system'
-        }
-        {
           name: 'appinsights-connection'
           keyVaultUrl: appInsightsConnectionStringSecretUri
           identity: 'system'
@@ -120,8 +113,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: appName
-          image: '${acrName}.azurecr.io/${appName}:${containerImageTag}'
+          name: containerAppName
+          image: '${acrName}.azurecr.io/${containerAppName}:${containerImageTag}'
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
@@ -134,9 +127,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'API_AZURE_CLIENT_ID', value: azureClientId }
             { name: 'ALLOWED_USERS', value: allowedUsers }
             { name: 'CORS_ORIGINS', value: corsOrigins }
-            { name: 'JWT_SECRET', secretRef: 'jwt-secret' }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', secretRef: 'appinsights-connection' }
-            { name: 'OAUTH_BASE_URL', value: 'https://${appName}.${containerAppEnv.properties.defaultDomain}' }
           ]
           probes: [
             {
@@ -187,7 +178,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 // Console/system logs flow via the Environment's appLogsConfiguration above.
 
 resource containerAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'mi-${environmentName}-capp-diag'
+  name: '${containerAppName}-capp-diag'
   scope: containerApp
   properties: {
     workspaceId: logAnalyticsWorkspaceId

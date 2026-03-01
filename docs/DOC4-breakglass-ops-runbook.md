@@ -27,20 +27,20 @@ The "2am something is broken" doc. Keep this short and actionable.
 
 ```bash
 # List revisions — find the last working one
-az containerapp revision list -n mi-<env> -g meeting-intelligence-<env>-rg \
+az containerapp revision list -n ca-mi-prod-<env> -g rg-app-prod-mi-<env> \
   --query "[].{name:name, active:properties.active, created:properties.createdTime}" -o table
 
 # Activate the previous revision
-az containerapp revision activate -n mi-<env> -g <rg> --revision <PREVIOUS>
+az containerapp revision activate -n ca-mi-prod-<env> -g <rg> --revision <PREVIOUS>
 
 # Route all traffic to it
-az containerapp ingress traffic set -n mi-<env> -g <rg> --revision-weight <PREVIOUS>=100
+az containerapp ingress traffic set -n ca-mi-prod-<env> -g <rg> --revision-weight <PREVIOUS>=100
 
 # Verify
 curl -sf https://<FQDN>/health/ready | jq
 
 # Deactivate the broken revision
-az containerapp revision deactivate -n mi-<env> -g <rg> --revision <BAD>
+az containerapp revision deactivate -n ca-mi-prod-<env> -g <rg> --revision <BAD>
 ```
 
 **Note:** Rollback does NOT affect Key Vault secrets or database schema. If the issue is a schema migration, you need PITR (see below).
@@ -59,14 +59,14 @@ RESTORE_TIME="2026-02-27T02:00:00Z"
 
 # Restore to a new database
 az sql db restore \
-  --server mi-<env>-sql \
-  --resource-group meeting-intelligence-<env>-rg \
-  --name mi-<env> \
-  --dest-name mi-<env>-restored \
+  --server sql-mi-prod-<env> \
+  --resource-group rg-app-prod-mi-<env> \
+  --name sqldb-mi-prod-<env> \
+  --dest-name sqldb-mi-prod-<env>-restored \
   --time "$RESTORE_TIME"
 
 # Verify the restored database (spot-check row counts)
-sqlcmd -S mi-<env>-sql.database.windows.net -d mi-<env>-restored \
+sqlcmd -S sql-mi-prod-<env>.database.windows.net -d sqldb-mi-prod-<env>-restored \
   -G --authentication-method=ActiveDirectoryDefault \
   -Q "SELECT 'Meetings', COUNT(*) FROM Meeting UNION ALL SELECT 'Actions', COUNT(*) FROM Action UNION ALL SELECT 'Decisions', COUNT(*) FROM Decision"
 ```
@@ -75,13 +75,13 @@ sqlcmd -S mi-<env>-sql.database.windows.net -d mi-<env>-restored \
 
 ```bash
 # Rename current (broken) database
-az sql db rename --server mi-<env>-sql -g <rg> --name mi-<env> --new-name mi-<env>-broken
+az sql db rename --server sql-mi-prod-<env> -g <rg> --name sqldb-mi-prod-<env> --new-name sqldb-mi-prod-<env>-broken
 
 # Rename restored database to the expected name
-az sql db rename --server mi-<env>-sql -g <rg> --name mi-<env>-restored --new-name mi-<env>
+az sql db rename --server sql-mi-prod-<env> -g <rg> --name sqldb-mi-prod-<env>-restored --new-name sqldb-mi-prod-<env>
 
 # Restart the container to pick up the new database
-az containerapp revision restart -n mi-<env> -g <rg> --revision <current-revision>
+az containerapp revision restart -n ca-mi-prod-<env> -g <rg> --revision <current-revision>
 
 # Verify
 curl -sf https://<FQDN>/health/ready | jq
@@ -104,20 +104,20 @@ Settings → find the token → click Revoke.
 
 ```bash
 # List tokens to find the ID
-cd server && AZURE_SQL_SERVER=mi-<env>-sql.database.windows.net \
-  CONTROL_DB_NAME=mi-<env>-control \
+cd server && AZURE_SQL_SERVER=sql-mi-prod-<env>.database.windows.net \
+  CONTROL_DB_NAME=sqldb-mi-prod-<env>-control \
   uv run python scripts/manage_tokens.py list
 
 # Revoke by token ID
-cd server && AZURE_SQL_SERVER=mi-<env>-sql.database.windows.net \
-  CONTROL_DB_NAME=mi-<env>-control \
+cd server && AZURE_SQL_SERVER=sql-mi-prod-<env>.database.windows.net \
+  CONTROL_DB_NAME=sqldb-mi-prod-<env>-control \
   uv run python scripts/manage_tokens.py revoke --token-id <ID>
 ```
 
 **Cache warning:** The auth layer caches token lookups for 5 minutes. A revoked token may still work for up to 5 minutes after revocation. For immediate invalidation during a security incident, restart the container:
 
 ```bash
-az containerapp revision restart -n mi-<env> -g <rg> --revision <current-revision>
+az containerapp revision restart -n ca-mi-prod-<env> -g <rg> --revision <current-revision>
 ```
 
 ---
@@ -145,11 +145,11 @@ All alerts email caleb.lucas@generationai.co.nz. 7 alert rules deployed via Bice
 
 | Alert | First action |
 |-------|-------------|
-| **5xx errors** | Check container logs: `az containerapp logs show -n mi-<env> -g <rg> --tail 50` |
-| **Replica down** | Check revision status: `az containerapp revision list -n mi-<env> -g <rg> -o table` |
+| **5xx errors** | Check container logs: `az containerapp logs show -n ca-mi-prod-<env> -g <rg> --tail 50` |
+| **Replica down** | Check revision status: `az containerapp revision list -n ca-mi-prod-<env> -g <rg> -o table` |
 | **Auth failure spike** | Check for brute force — rate limiting (120/min MCP, 60/min API) should contain it. If token compromised, revoke (Section 3). |
 | **High response time** | Check if database auto-pause is resuming (expected 2-5s on first request). If sustained, check DTU utilisation in portal. |
-| **Container restarts** | Crash loop — check system logs: `az containerapp logs show -n mi-<env> -g <rg> --type system` |
+| **Container restarts** | Crash loop — check system logs: `az containerapp logs show -n ca-mi-prod-<env> -g <rg> --type system` |
 | **High CPU/memory** | Auto-scaler should handle it (max 10 replicas). If at max, increase resources in Bicep. |
 
 ---

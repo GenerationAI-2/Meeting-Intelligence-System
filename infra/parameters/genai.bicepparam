@@ -13,5 +13,4 @@ param minReplicas = 1
 
 // Dynamic params — passed via environment variables at deployment time
 param containerImageTag = readEnvironmentVariable('CONTAINER_IMAGE_TAG', 'latest')
-param jwtSecret = readEnvironmentVariable('JWT_SECRET')
 param appInsightsConnection = readEnvironmentVariable('APPLICATIONINSIGHTS_CONNECTION_STRING', '')

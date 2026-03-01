@@ -29,9 +29,32 @@ Each client environment is a self-contained resource group with no cross-client 
 | Log Analytics | `log-mi-prod-<client>` | PerGB2018, 30-day retention |
 | Application Insights | `appi-mi-prod-<client>` | Linked to Log Analytics |
 | Action Group | `ag-mi-prod-<client>` | Email alerts |
-| Container Registry | `acr-mi-prod-<client>` | Basic tier, admin disabled, managed identity pull |
+| Container Registry | `meetingintelacr20260116` (shared) | Basic tier, admin disabled, managed identity pull |
 
-**Estimated cost:** ~$20-30 AUD/month per client environment (always-on, Basic SQL tier).
+**Region:** New Zealand North
+
+**Estimated monthly cost (NZD):**
+
+| Category | Resource | Est. Cost/Month |
+|----------|----------|----------------|
+| Azure | Container Apps (always-on, 0.25 vCPU, 0.5 GiB) | ~$16 |
+| Azure | SQL Server (logical — no charge) | $0 |
+| Azure | SQL Database x2 (Basic, 5 DTU each) | ~$27 |
+| Azure | Key Vault (Standard) | ~$5 |
+| Azure | Azure Monitor (Log Analytics + App Insights) | ~$16 |
+| Azure | Container Registry (Basic) | ~$7 |
+| **Azure subtotal** | | **~$71** |
+| CorIT | Microsoft Defender for Cloud | ~$34 |
+| CorIT | 24/7 SOC and SIEM | $30 |
+| CorIT | Support and monitoring | $25 |
+| **CorIT subtotal** | | **~$89** |
+| **Total** | | **~$160/month** |
+
+**One-time setup (NZD):** CSP Subscription Setup ($150) + IAM and Management Group Setup ($45) = **$195**
+
+*Source: CorIT Azure Pricing Calculator export, 14 Feb 2026. All prices NZD.*
+
+*Note: Each client has 1 SQL Server + 2 databases minimum (control + first workspace). Additional workspace databases add ~$13.55 NZD/month each (Basic, 5 DTU).*
 
 ---
 
@@ -95,7 +118,7 @@ No shared passwords anywhere in the system. All service-to-service auth uses man
 
 **AI Tools → MCP API:** Personal Access Tokens (SHA256 hashed, stored in control DB). Self-service generation via web UI. 5-minute in-memory cache. Rate limited at 120 requests/min per token.
 
-**SQL Server Firewall:** `AllowAllWindowsAzureIps` rule only — no public endpoint access. Managed identity required for all connections.
+**SQL Server Firewall:** `AllowAzureServices` rule only — no public endpoint access. Managed identity required for all connections.
 
 ---
 
@@ -161,7 +184,7 @@ All infrastructure is codified in Bicep — a full environment can be rebuilt fr
 5. Craig's team runs security standup in parallel (Sentinel, SOC, ITSM — ~7 days)
 6. Client receives web UI URL + MCP connection instructions
 
-**Image management:** Per-client ACR, timestamp-tagged images (`mi-<env>:20260227120000`). Rollback by activating a previous Container App revision (<5 min).
+**Image management:** Shared ACR (`meetingintelacr20260116`), timestamp-tagged images (`ca-mi-prod-<client>:20260227120000`). Rollback by activating a previous Container App revision (<5 min).
 
 **What Craig's team needs to provide per client:**
 - Subscription with appropriate management groups
@@ -180,10 +203,10 @@ All infrastructure is codified in Bicep — a full environment can be rebuilt fr
 
 | Enhancement | Trigger | Additional Cost |
 |-------------|---------|----------------|
-| SQL Standard tier (longer retention, geo-replication) | Enterprise RPO requirement | ~$20/month |
-| VNet integration + private endpoints | Enterprise network policy | ~$8/month per endpoint |
-| Microsoft Defender for Containers | 10+ clients | $7/month per cluster |
-| Multi-region deployment | Regional failover requirement | ~$60/month (duplicate resources) |
+| SQL Standard tier (longer retention, geo-replication) | Enterprise RPO requirement | ~$30 NZD/month |
+| VNet integration + private endpoints | Enterprise network policy | ~$12 NZD/month per endpoint |
+| Microsoft Defender for Containers | 10+ clients | ~$11 NZD/month per cluster |
+| Multi-region deployment | Regional failover requirement | ~$90 NZD/month (duplicate resources) |
 | Custom domain + TLS | Client branding | DNS + managed certificate (free via Container Apps) |
 
 ---

@@ -109,15 +109,15 @@ git push origin main
 The Bicep template sets `CONTROL_DB_NAME` automatically. Verify it's present:
 
 ```bash
-az containerapp show -n mi-<client-name> -g meeting-intelligence-<client-name>-rg \
+az containerapp show -n ca-mi-prod-<client-name> -g rg-app-prod-mi-<client-name> \
   --query "properties.template.containers[0].env[?name=='CONTROL_DB_NAME'].value" -o tsv
 ```
 
 If empty (shouldn't happen on new deploys), set it manually:
 
 ```bash
-az containerapp update -n mi-<client-name> -g meeting-intelligence-<client-name>-rg \
-  --set-env-vars CONTROL_DB_NAME=mi-<client-name>-control
+az containerapp update -n ca-mi-prod-<client-name> -g rg-app-prod-mi-<client-name> \
+  --set-env-vars CONTROL_DB_NAME=sqldb-mi-prod-<client-name>-control
 ```
 
 **Gotcha:** Without this, the app falls back to legacy mode which grants full admin to all users.
@@ -149,44 +149,13 @@ curl -sf "https://<FQDN>/mcp" \
 
 ## Step 5: Client Configuration
 
-Provide the client with connection details for their AI tools. The Settings page in the web UI shows dynamic connection URLs per instance.
+Send the client their Quick Start Guide (DOC1) with the instance URL. They self-service from there:
 
-### Claude.ai (Custom Connector)
+1. Sign in to the web UI at `https://<FQDN>`
+2. Go to Settings → Create Token (self-service, one-time)
+3. Connect via Claude.ai custom connector using: `https://<FQDN>/mcp?token=<TOKEN>`
 
-Add as a custom connector with this URL:
-
-```
-https://<FQDN>/mcp?token=<TOKEN>
-```
-
-### Claude Desktop / Claude Code
-
-```json
-{
-  "mcpServers": {
-    "meeting-intelligence": {
-      "url": "https://<FQDN>/mcp",
-      "headers": {
-        "Authorization": "Bearer <TOKEN>"
-      }
-    }
-  }
-}
-```
-
-### Other MCP Clients (Copilot, etc.)
-
-```
-MCP Server URL: https://<FQDN>/mcp
-Auth: Bearer token in Authorization header, or X-API-Key header
-```
-
-### Web UI
-
-```
-URL: https://<FQDN>
-Auth: Azure AD login (users must be workspace members in control DB)
-```
+The deploy script (Phase 3) creates the first admin user and token automatically. Additional users generate their own tokens via the web UI.
 
 ---
 
@@ -196,13 +165,13 @@ If the deployment is broken and can't be fixed quickly:
 
 ```bash
 # 1. List revisions
-az containerapp revision list -n mi-<env> -g meeting-intelligence-<env>-rg -o table
+az containerapp revision list -n ca-mi-prod-<env> -g rg-app-prod-mi-<env> -o table
 
 # 2. Activate the previous working revision
-az containerapp revision activate -n mi-<env> -g <rg> --revision <previous-revision>
+az containerapp revision activate -n ca-mi-prod-<env> -g rg-app-prod-mi-<env> --revision <previous-revision>
 
 # 3. Route all traffic to it
-az containerapp ingress traffic set -n mi-<env> -g <rg> --revision-weight <previous-revision>=100
+az containerapp ingress traffic set -n ca-mi-prod-<env> -g rg-app-prod-mi-<env> --revision-weight <previous-revision>=100
 
 # 4. Verify
 curl -sf https://<FQDN>/health/ready
@@ -211,7 +180,7 @@ curl -sf https://<FQDN>/health/ready
 For a full environment teardown (if needed):
 
 ```bash
-az group delete -n meeting-intelligence-<env>-rg --yes --no-wait
+az group delete -n rg-app-prod-mi-<env> --yes --no-wait
 ```
 
 ---

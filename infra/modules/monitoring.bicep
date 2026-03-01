@@ -1,8 +1,14 @@
 // monitoring.bicep — Log Analytics + Application Insights + Budget Alerts
 // Part of Meeting Intelligence IaC (Stream A)
 
-@description('Environment name')
-param environmentName string
+@description('Log Analytics workspace name')
+param logAnalyticsName string
+
+@description('Application Insights name')
+param appInsightsName string
+
+@description('Budget name')
+param budgetName string
 
 @description('Azure region')
 param location string
@@ -16,7 +22,7 @@ param alertEmail string = 'caleb.lucas@generationai.co.nz'
 // === LOG ANALYTICS WORKSPACE ===
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: 'mi-${environmentName}-logs'
+  name: logAnalyticsName
   location: location
   tags: tags
   properties: {
@@ -30,7 +36,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 // === APPLICATION INSIGHTS ===
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
-  name: 'mi-${environmentName}-insights'
+  name: appInsightsName
   location: location
   tags: tags
   kind: 'web'
@@ -44,7 +50,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 // === BUDGET ALERT ===
 
 resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
-  name: 'mi-${environmentName}-monthly'
+  name: budgetName
   properties: {
     category: 'Cost'
     amount: 35

@@ -154,7 +154,7 @@ All registered via FastMCP framework. Transport: Streamable HTTP (endpoint: `/mc
 
 ## REST API
 
-~20 endpoints serving the web UI. All mounted at `/api/`.
+~30 endpoints serving the web UI. Most mounted at `/api/`.
 
 ### Authentication & Profile
 
@@ -205,8 +205,14 @@ Mounted at `/api/admin/`.
 
 ### Health & Schema
 
-- `GET /health/ready` — Health check (no auth)
+- `GET /health/ready` — Readiness probe (no auth)
+- `GET /health/live` — Liveness probe (no auth)
+- `GET /api/health` — Basic health check (no auth)
 - `GET /api/schema` — Entity field definitions (no auth)
+
+### Audit
+
+- `GET /api/admin/workspaces/{id}/audit` — Workspace audit log (org_admin / chair)
 
 ---
 

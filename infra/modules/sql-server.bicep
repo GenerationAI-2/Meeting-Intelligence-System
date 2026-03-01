@@ -8,8 +8,14 @@
 //
 // For adding additional workspace databases, use workspace-db.bicep.
 
-@description('Environment name')
-param environmentName string
+@description('SQL Server name')
+param sqlServerName string
+
+@description('General workspace database name')
+param sqlDatabaseName string
+
+@description('Control database name')
+param controlDbName string
 
 @description('Azure region')
 param location string
@@ -38,7 +44,7 @@ param logAnalyticsWorkspaceId string
 // === SQL SERVER ===
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
-  name: 'mi-${environmentName}-sql'
+  name: sqlServerName
   location: location
   tags: tags
   properties: {
@@ -69,7 +75,7 @@ resource firewallAllowAzure 'Microsoft.Sql/servers/firewallRules@2023-08-01-prev
 
 resource controlDatabase 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   parent: sqlServer
-  name: 'mi-${environmentName}-control'
+  name: controlDbName
   location: location
   tags: tags
   sku: {
@@ -86,7 +92,7 @@ resource controlDatabase 'Microsoft.Sql/servers/databases@2023-08-01-preview' = 
 
 resource generalDatabase 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   parent: sqlServer
-  name: 'mi-${environmentName}'
+  name: sqlDatabaseName
   location: location
   tags: tags
   sku: {
@@ -152,7 +158,7 @@ var sqlDiagMetrics = [
 ]
 
 resource controlDatabaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'mi-${environmentName}-control-sql-diag'
+  name: '${controlDbName}-sql-diag'
   scope: controlDatabase
   properties: {
     workspaceId: logAnalyticsWorkspaceId
@@ -162,7 +168,7 @@ resource controlDatabaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-
 }
 
 resource generalDatabaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'mi-${environmentName}-sql-diag'
+  name: '${sqlDatabaseName}-sql-diag'
   scope: generalDatabase
   properties: {
     workspaceId: logAnalyticsWorkspaceId

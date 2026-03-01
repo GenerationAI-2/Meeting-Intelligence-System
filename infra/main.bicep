@@ -3,16 +3,15 @@
 //
 // Usage:
 //   az deployment group create \
-//     --resource-group meeting-intelligence-<env>-rg \
+//     --resource-group <resource-group> \
 //     --template-file infra/main.bicep \
-//     --parameters infra/parameters/<env>.bicepparam \
-//     --parameters containerImageTag=<tag> jwtSecret=<secret> appInsightsConnection=<conn>
+//     --parameters infra/parameters/<env>.bicepparam
 
 targetScope = 'resourceGroup'
 
 // === PARAMETERS ===
 
-@description('Environment name (e.g., genai, marshall, testing-instance)')
+@description('Environment name (e.g., genai, marshall, fero)')
 param environmentName string
 
 @description('Azure region')
@@ -47,13 +46,15 @@ param corsOrigins string
 @maxValue(10)
 param minReplicas int = 0
 
-@description('JWT secret for OAuth signing')
-@secure()
-param jwtSecret string
-
 @description('Application Insights connection string — leave empty to auto-generate from monitoring module')
 @secure()
 param appInsightsConnection string = ''
+
+@description('Enable CAF (Cloud Adoption Framework) resource naming')
+param cafNaming bool = false
+
+@description('Environment type for CAF naming (e.g., prod, dev, test)')
+param environmentType string = 'prod'
 
 // === TAGS ===
 
@@ -64,12 +65,29 @@ var tags = {
   'created-by': 'bicep'
 }
 
+// === RESOURCE NAMING ===
+// CAF naming: https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-naming
+// Legacy naming preserved for backward compatibility with existing environments.
+
+var containerAppName = cafNaming ? 'ca-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}'
+var containerAppEnvName = cafNaming ? 'cae-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-env'
+var sqlServerName = cafNaming ? 'sql-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-sql'
+var sqlDatabaseName = cafNaming ? 'sqldb-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}'
+var controlDbName = cafNaming ? 'sqldb-mi-${environmentType}-${environmentName}-control' : 'mi-${environmentName}-control'
+var keyVaultName = cafNaming ? 'kv-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-kv'
+var logAnalyticsName = cafNaming ? 'log-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-logs'
+var appInsightsName = cafNaming ? 'appi-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-insights'
+var budgetName = cafNaming ? 'budget-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-monthly'
+var actionGroupName = cafNaming ? 'ag-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-alerts'
+
 // === MODULES ===
 
 module monitoring 'modules/monitoring.bicep' = {
   name: 'monitoring-${environmentName}'
   params: {
-    environmentName: environmentName
+    logAnalyticsName: logAnalyticsName
+    appInsightsName: appInsightsName
+    budgetName: budgetName
     location: location
     tags: tags
   }
@@ -81,10 +99,9 @@ var effectiveAppInsightsConnection = !empty(appInsightsConnection) ? appInsights
 module keyVault 'modules/keyvault.bicep' = {
   name: 'keyvault-${environmentName}'
   params: {
-    environmentName: environmentName
+    keyVaultName: keyVaultName
     location: location
     tags: tags
-    jwtSecret: jwtSecret
     appInsightsConnection: effectiveAppInsightsConnection
   }
 }
@@ -92,7 +109,9 @@ module keyVault 'modules/keyvault.bicep' = {
 module sql 'modules/sql-server.bicep' = {
   name: 'sql-${environmentName}'
   params: {
-    environmentName: environmentName
+    sqlServerName: sqlServerName
+    sqlDatabaseName: sqlDatabaseName
+    controlDbName: controlDbName
     location: location
     tags: tags
     sqlAdminObjectId: sqlAdminObjectId
@@ -104,7 +123,8 @@ module sql 'modules/sql-server.bicep' = {
 module containerApp 'modules/container-app.bicep' = {
   name: 'containerapp-${environmentName}'
   params: {
-    environmentName: environmentName
+    containerAppName: containerAppName
+    containerAppEnvName: containerAppEnvName
     location: location
     tags: tags
     acrName: acrName
@@ -118,7 +138,6 @@ module containerApp 'modules/container-app.bicep' = {
     corsOrigins: corsOrigins
     minReplicas: minReplicas
     appInsightsConnectionStringSecretUri: keyVault.outputs.appInsightsSecretUri
-    jwtSecretUri: keyVault.outputs.jwtSecretUri
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }
 }
@@ -134,7 +153,8 @@ module identity 'modules/identity.bicep' = {
 module alerts 'modules/alerts.bicep' = {
   name: 'alerts-${environmentName}'
   params: {
-    environmentName: environmentName
+    actionGroupName: actionGroupName
+    containerAppName: containerAppName
     location: location
     tags: tags
     containerAppId: containerApp.outputs.containerAppId

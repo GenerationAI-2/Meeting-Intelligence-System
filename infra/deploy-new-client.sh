@@ -29,7 +29,6 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - Azure CLI authenticated (az login)
-#   - .env.deploy file with JWT_SECRET
 #   - Parameter file at infra/parameters/<env>.bicepparam
 #   - App Registration already created (client ID in param file)
 #   - sqlcmd installed (for database init) — install: brew install sqlcmd
@@ -45,12 +44,39 @@ ENV=${1:?Usage: ./infra/deploy-new-client.sh <environment-name> [image-tag]}
 IMAGE_TAG=${2:-$(date +%Y%m%d%H%M%S)}
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_NAME="mi-${ENV}"
-RESOURCE_GROUP="meeting-intelligence-${ENV}-rg"
-SQL_SERVER="mi-${ENV}-sql.database.windows.net"
-SQL_SERVER_NAME="mi-${ENV}-sql"
-SQL_DATABASE="mi-${ENV}"
-CONTROL_DATABASE="mi-${ENV}-control"
+
+# --- Detect CAF naming from parameter file ---
+PARAM_FILE="${SCRIPT_DIR}/parameters/${ENV}.bicepparam"
+CAF_NAMING=$(grep "param cafNaming" "$PARAM_FILE" 2>/dev/null | grep -c "true" || echo "0")
+ENV_TYPE=$(grep "param environmentType" "$PARAM_FILE" 2>/dev/null | sed "s/.*= '//;s/'.*//" || echo "prod")
+
+if [ "$CAF_NAMING" -gt 0 ]; then
+    # CAF convention: rg-app-<type>-mi-<env>, ca-mi-<type>-<env>, etc.
+    APP_NAME="ca-mi-${ENV_TYPE}-${ENV}"
+    RESOURCE_GROUP="rg-app-${ENV_TYPE}-mi-${ENV}"
+    SQL_SERVER_NAME="sql-mi-${ENV_TYPE}-${ENV}"
+    SQL_SERVER="${SQL_SERVER_NAME}.database.windows.net"
+    SQL_DATABASE="sqldb-mi-${ENV_TYPE}-${ENV}"
+    CONTROL_DATABASE="sqldb-mi-${ENV_TYPE}-${ENV}-control"
+    echo "Naming: CAF (${ENV_TYPE})"
+else
+    # Legacy convention (genai, marshall, testing-instance)
+    APP_NAME="mi-${ENV}"
+    RESOURCE_GROUP="meeting-intelligence-${ENV}-rg"
+    SQL_SERVER_NAME="mi-${ENV}-sql"
+    SQL_SERVER="${SQL_SERVER_NAME}.database.windows.net"
+    SQL_DATABASE="mi-${ENV}"
+    CONTROL_DATABASE="mi-${ENV}-control"
+    echo "Naming: Legacy"
+fi
+
+# --- Set subscription if specified in param file or environment ---
+PARAM_SUBSCRIPTION=$(grep "param subscriptionId" "$PARAM_FILE" 2>/dev/null | sed "s/.*= '//;s/'.*//" || echo "")
+TARGET_SUBSCRIPTION="${AZURE_SUBSCRIPTION_ID:-$PARAM_SUBSCRIPTION}"
+if [ -n "$TARGET_SUBSCRIPTION" ]; then
+    echo "Setting subscription: ${TARGET_SUBSCRIPTION}"
+    az account set --subscription "$TARGET_SUBSCRIPTION"
+fi
 
 echo "=== New Client Deployment: ${ENV} ==="
 echo ""

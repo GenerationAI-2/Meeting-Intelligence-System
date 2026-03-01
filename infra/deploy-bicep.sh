@@ -19,17 +19,39 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - Azure CLI authenticated (az login)
-#   - .env.deploy file with JWT_SECRET (or set in environment)
 #   - Parameter file at infra/parameters/<env>.bicepparam
 
 ENV=${1:?Usage: ./infra/deploy-bicep.sh <environment-name> [image-tag]}
 IMAGE_TAG=${2:-$(date +%Y%m%d%H%M%S)}
-RESOURCE_GROUP="meeting-intelligence-${ENV}-rg"
-LOCATION="australiaeast"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_NAME="mi-${ENV}"
 ACR_NAME="meetingintelacr20260116"
+
+# --- Detect CAF naming from parameter file ---
+PARAM_FILE_CHECK="${SCRIPT_DIR}/parameters/${ENV}.bicepparam"
+CAF_NAMING=$(grep "param cafNaming" "$PARAM_FILE_CHECK" 2>/dev/null | grep -c "true" || echo "0")
+ENV_TYPE=$(grep "param environmentType" "$PARAM_FILE_CHECK" 2>/dev/null | sed "s/.*= '//;s/'.*//" || echo "prod")
+LOCATION=$(grep "param location" "$PARAM_FILE_CHECK" 2>/dev/null | sed "s/.*= '//;s/'.*//" || echo "australiaeast")
+
+if [ "$CAF_NAMING" -gt 0 ]; then
+    APP_NAME="ca-mi-${ENV_TYPE}-${ENV}"
+    RESOURCE_GROUP="rg-app-${ENV_TYPE}-mi-${ENV}"
+    KV_NAME="kv-mi-${ENV_TYPE}-${ENV}"
+    echo "Naming: CAF (${ENV_TYPE})"
+else
+    APP_NAME="mi-${ENV}"
+    RESOURCE_GROUP="meeting-intelligence-${ENV}-rg"
+    KV_NAME="mi-${ENV}-kv"
+    echo "Naming: Legacy"
+fi
+
+# --- Set subscription if specified ---
+PARAM_SUBSCRIPTION=$(grep "param subscriptionId" "$PARAM_FILE_CHECK" 2>/dev/null | sed "s/.*= '//;s/'.*//" || echo "")
+TARGET_SUBSCRIPTION="${AZURE_SUBSCRIPTION_ID:-$PARAM_SUBSCRIPTION}"
+if [ -n "$TARGET_SUBSCRIPTION" ]; then
+    echo "Setting subscription: ${TARGET_SUBSCRIPTION}"
+    az account set --subscription "$TARGET_SUBSCRIPTION"
+fi
 
 # All environments are Bicep-managed (team/demo decommissioned Feb 2026)
 
@@ -58,16 +80,8 @@ fi
 CLIENT_ID=$(grep "param azureClientId" "$PARAM_FILE" | sed "s/.*= '//;s/'.*//")
 TENANT_ID=$(grep "param azureTenantId" "$PARAM_FILE" | sed "s/.*= '//;s/'.*//")
 
-# --- Generate JWT_SECRET if not set ---
-if [ -z "${JWT_SECRET:-}" ]; then
-    echo "No JWT_SECRET found — generating new secret..."
-    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-    echo "JWT_SECRET generated (will be stored in Key Vault)"
-fi
-
 # Export env vars for readEnvironmentVariable() in .bicepparam files
 export CONTAINER_IMAGE_TAG="$IMAGE_TAG"
-export JWT_SECRET
 export APPLICATIONINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
 
 # --- Detect greenfield vs existing ---
@@ -177,7 +191,6 @@ echo ""
 # if previously assigned manually with a different GUID name. This CLI step
 # ensures the role is always present regardless of Bicep module success.
 echo "--- Phase 5: Ensuring Key Vault Secrets User role ---"
-KV_NAME="mi-${ENV}-kv"
 KV_ID=$(az keyvault show --name "$KV_NAME" --query id -o tsv 2>/dev/null || echo "")
 if [ -n "$KV_ID" ]; then
     EXISTING_KV_ROLE=$(az role assignment list --assignee "$PRINCIPAL_ID" --role "Key Vault Secrets User" --scope "$KV_ID" --query "length(@)" -o tsv 2>/dev/null || echo "0")
@@ -316,11 +329,11 @@ if [ "$GREENFIELD" = true ]; then
     echo ""
     echo "  ./infra/deploy-new-client.sh ${ENV} ${IMAGE_TAG}"
     echo ""
-    echo "Or complete manually:"
-    echo "  1. DB init: sqlcmd -S mi-${ENV}-sql.database.windows.net -d mi-${ENV} \\"
+    echo "Or complete manually (resource names depend on CAF vs legacy naming):"
+    echo "  1. DB init: sqlcmd -S <sql-server>.database.windows.net -d <database> \\"
     echo "       -G --authentication-method=ActiveDirectoryDefault -i schema.sql"
     echo "  2. Migrations: cd server && uv run python -m scripts.migrate \\"
-    echo "       --server mi-${ENV}-sql.database.windows.net --database mi-${ENV}"
+    echo "       --server <sql-server>.database.windows.net --database <database>"
     echo "  3. Token: cd server && uv run python scripts/manage_tokens.py create \\"
     echo "       --client '${ENV}' --email '<client-email>'"
     echo "  4. Admin consent (requires Global Admin):"

@@ -3,7 +3,6 @@
 import hashlib
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, status
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 from .schemas import StatusUpdate
@@ -169,16 +168,6 @@ async def log_requests(request: Request, call_next):
         "status": response.status_code,
     })
     return response
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.get_cors_origins_list(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 def _get_engine_for_ctx(ctx: WorkspaceContext):
     """Get the SQLAlchemy engine for the active workspace."""

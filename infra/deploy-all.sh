@@ -92,10 +92,6 @@ az acr build \
 echo "Image pushed: ${ACR_NAME}.azurecr.io/mi:${IMAGE_TAG}"
 echo ""
 
-if [ -z "${JWT_SECRET:-}" ]; then
-    read -sp "JWT_SECRET: " JWT_SECRET; echo
-fi
-
 # --- Deploy function ---
 deploy_env() {
     local env_name=$1
@@ -111,7 +107,6 @@ deploy_env() {
 
     # Export env vars for readEnvironmentVariable() in bicepparam files
     export CONTAINER_IMAGE_TAG="${IMAGE_TAG}"
-    export JWT_SECRET
     export APPLICATIONINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
 
     az group create \
