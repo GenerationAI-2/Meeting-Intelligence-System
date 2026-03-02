@@ -19,6 +19,9 @@ param tags object
 @description('Budget alert email')
 param alertEmail string = 'caleb.lucas@generationai.co.nz'
 
+@description('Budget start month (utcNow default ensures current month)')
+param budgetStartMonth string = utcNow('yyyy-MM')
+
 // === LOG ANALYTICS WORKSPACE ===
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -48,6 +51,9 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 }
 
 // === BUDGET ALERT ===
+// Start date must be current month or later for monthly budgets.
+
+var budgetStart = '${budgetStartMonth}-01'
 
 resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
   name: budgetName
@@ -56,8 +62,8 @@ resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
     amount: 35
     timeGrain: 'Monthly'
     timePeriod: {
-      startDate: '2026-02-01'
-      endDate: '2027-02-01'
+      startDate: budgetStart
+      endDate: dateTimeAdd(budgetStart, 'P1Y')
     }
     filter: {
       dimensions: {

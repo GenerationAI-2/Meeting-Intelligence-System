@@ -84,6 +84,26 @@ TENANT_ID=$(grep "param azureTenantId" "$PARAM_FILE" | sed "s/.*= '//;s/'.*//")
 export CONTAINER_IMAGE_TAG="$IMAGE_TAG"
 export APPLICATIONINSIGHTS_CONNECTION_STRING="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
 
+# --- Resolve ACR subscription (may differ from target subscription) ---
+ACR_SUB=""
+if az acr show --name "$ACR_NAME" --query id -o tsv &>/dev/null; then
+    ACR_SUB=$(az account show --query id -o tsv)
+else
+    echo "ACR '${ACR_NAME}' not in current subscription — searching others..."
+    for sub in $(az account list --query "[].id" -o tsv); do
+        if az acr show --name "$ACR_NAME" --subscription "$sub" --query id -o tsv &>/dev/null; then
+            ACR_SUB="$sub"
+            echo "ACR found in subscription: $(az account list --query "[?id=='$sub'].name | [0]" -o tsv)"
+            break
+        fi
+    done
+fi
+if [ -z "$ACR_SUB" ]; then
+    echo "ERROR: ACR '${ACR_NAME}' not found in any accessible subscription."
+    echo "Check: az acr list --query '[].name' --output table"
+    exit 1
+fi
+
 # --- Detect greenfield vs existing ---
 GREENFIELD=false
 if ! az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" &>/dev/null; then
@@ -100,6 +120,7 @@ echo ""
 echo "--- Phase 1: Building container image ---"
 if ! az acr build \
     --registry "$ACR_NAME" \
+    --subscription "$ACR_SUB" \
     --image "${APP_NAME}:${IMAGE_TAG}" \
     --file "${REPO_ROOT}/server/Dockerfile" \
     --build-arg VITE_SPA_CLIENT_ID="$CLIENT_ID" \
@@ -174,7 +195,7 @@ if [ -z "$PRINCIPAL_ID" ]; then
     exit 1
 fi
 
-ACR_ID=$(az acr show --name "$ACR_NAME" --query id -o tsv)
+ACR_ID=$(az acr show --name "$ACR_NAME" --subscription "$ACR_SUB" --query id -o tsv)
 EXISTING_ACR_ROLE=$(az role assignment list --assignee "$PRINCIPAL_ID" --role AcrPull --scope "$ACR_ID" --query "length(@)" -o tsv 2>/dev/null || echo "0")
 if [ "${EXISTING_ACR_ROLE:-0}" -gt 0 ] 2>/dev/null; then
     echo "AcrPull: already assigned"
