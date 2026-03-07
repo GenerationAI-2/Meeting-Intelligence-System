@@ -4,6 +4,14 @@ import { apiConfig } from '../authConfig';
  * API service for meeting intelligence data
  */
 
+// Custom error for access denied (403)
+export class AccessDeniedError extends Error {
+    constructor(message = 'Access denied') {
+        super(message);
+        this.name = 'AccessDeniedError';
+    }
+}
+
 // Token provider to avoid circular dependencies with React hooks
 let getAccessToken = async () => null;
 
@@ -70,6 +78,14 @@ async function fetchApi(endpoint, options = {}) {
         }
         // No fresh token available - redirect to login already triggered in App.jsx
         // Fall through to error below
+    }
+
+    // On 403, throw AccessDeniedError for workspace access revocation handling
+    // This is NOT a token issue (user is authenticated but not authorized for this resource)
+    // WorkspaceContext will catch this and handle workspace switching
+    if (response.status === 403) {
+        console.error("[API] Received 403 - access denied (workspace access may have been revoked)");
+        throw new AccessDeniedError('You do not have access to this workspace');
     }
 
     if (!response.ok) {

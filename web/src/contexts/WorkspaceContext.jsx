@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { workspaceApi, setCurrentWorkspaceId } from '../services/api';
+import { workspaceApi, setCurrentWorkspaceId, AccessDeniedError } from '../services/api';
 
 const WorkspaceContext = createContext(null);
 
@@ -34,9 +34,55 @@ export function WorkspaceProvider({ children }) {
             }
         } catch (err) {
             console.error('Failed to fetch workspace context:', err);
-            setError(err.message);
-            // If workspace fetch fails, clear workspace header so requests still work
-            setCurrentWorkspaceId(null);
+
+            // Handle 403 (access denied) specifically
+            if (err instanceof AccessDeniedError) {
+                console.log('[WORKSPACE] Access denied to current workspace - checking available workspaces');
+
+                // Clear the workspace header and try to fetch available workspaces
+                setCurrentWorkspaceId(null);
+                localStorage.removeItem(STORAGE_KEY);
+
+                try {
+                    // Fetch workspace list without a specific workspace ID
+                    const data = await workspaceApi.me();
+
+                    if (data.workspaces && data.workspaces.length > 0) {
+                        // User has other workspaces - switch to the first one
+                        console.log(`[WORKSPACE] Switching to available workspace: ${data.workspaces[0].name}`);
+                        setError('Your access to the previous workspace was revoked. Switched to an available workspace.');
+
+                        // Switch to first available workspace
+                        const newWorkspaceId = data.workspaces[0].id;
+                        localStorage.setItem(STORAGE_KEY, String(newWorkspaceId));
+                        setCurrentWorkspaceId(newWorkspaceId);
+
+                        // Fetch again with the new workspace to get permissions
+                        const updatedData = await workspaceApi.me();
+                        setWorkspaces(updatedData.workspaces || []);
+                        setActiveWorkspace(updatedData.active_workspace || null);
+                        setPermissions(updatedData.permissions || { can_write: false, is_chair_or_admin: false });
+                        setIsOrgAdmin(updatedData.is_org_admin || false);
+                    } else {
+                        // User has no workspaces - complete access revocation
+                        console.error('[WORKSPACE] User has no workspace access');
+                        setError('Your workspace access has been revoked. Please contact your administrator.');
+                        setWorkspaces([]);
+                        setActiveWorkspace(null);
+                        setPermissions({ can_write: false, is_chair_or_admin: false });
+                        setIsOrgAdmin(false);
+                    }
+                } catch (retryErr) {
+                    console.error('[WORKSPACE] Failed to fetch available workspaces after 403:', retryErr);
+                    setError('Unable to load workspace information. Your access may have been revoked.');
+                    setCurrentWorkspaceId(null);
+                }
+            } else {
+                // Other errors (network, etc.)
+                setError(err.message);
+                // If workspace fetch fails, clear workspace header so requests still work
+                setCurrentWorkspaceId(null);
+            }
         } finally {
             setLoading(false);
         }
