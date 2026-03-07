@@ -21,28 +21,53 @@ function AuthenticationHandler({ children }) {
 
     useEffect(() => {
         setAccessTokenProvider(async (options = {}) => {
-            if (accounts.length > 0) {
-                const request = {
-                    scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
-                    account: accounts[0],
-                    forceRefresh: options.forceRefresh || false,
-                };
-                try {
-                    const response = await instance.acquireTokenSilent(request);
-                    return response.accessToken;
-                } catch (error) {
-                    if (error instanceof InteractionRequiredAuthError) {
-                        await instance.acquireTokenRedirect({
-                            scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
-                            account: accounts[0],
-                        });
-                        return null;
-                    }
-                    console.warn("Silent token acquisition failed", error);
+            console.error("[AUTH DIAGNOSTIC] getAccessToken called", {
+                hasAccounts: accounts.length > 0,
+                accountCount: accounts.length,
+                forceRefresh: options.forceRefresh || false
+            });
+
+            if (accounts.length === 0) {
+                console.error("[AUTH DIAGNOSTIC] No accounts found - returning null (THIS IS THE BUG IF YOU SEE THIS)");
+                return null;
+            }
+
+            const request = {
+                scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
+                account: accounts[0],
+                forceRefresh: options.forceRefresh || false,
+            };
+
+            console.error("[AUTH DIAGNOSTIC] Calling acquireTokenSilent with", {
+                scopes: request.scopes,
+                forceRefresh: request.forceRefresh,
+                accountUsername: accounts[0].username
+            });
+
+            try {
+                const response = await instance.acquireTokenSilent(request);
+                console.error("[AUTH DIAGNOSTIC] acquireTokenSilent SUCCESS - returning token");
+                return response.accessToken;
+            } catch (error) {
+                console.error("[AUTH DIAGNOSTIC] acquireTokenSilent FAILED", {
+                    errorType: error.constructor.name,
+                    errorMessage: error.message,
+                    isInteractionRequired: error instanceof InteractionRequiredAuthError
+                });
+
+                if (error instanceof InteractionRequiredAuthError) {
+                    console.error("[AUTH DIAGNOSTIC] Calling acquireTokenRedirect...");
+                    await instance.acquireTokenRedirect({
+                        scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
+                        account: accounts[0],
+                    });
+                    console.error("[AUTH DIAGNOSTIC] acquireTokenRedirect called - returning null (redirect should happen)");
                     return null;
                 }
+
+                console.error("[AUTH DIAGNOSTIC] Non-InteractionRequiredAuthError caught - returning null (THIS IS THE BUG - NO REDIRECT!)");
+                return null;
             }
-            return null;
         });
     }, [instance, accounts]);
 
