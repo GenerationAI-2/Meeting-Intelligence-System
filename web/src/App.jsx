@@ -21,28 +21,42 @@ function AuthenticationHandler({ children }) {
 
     useEffect(() => {
         setAccessTokenProvider(async (options = {}) => {
-            if (accounts.length > 0) {
-                const request = {
-                    scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
-                    account: accounts[0],
-                    forceRefresh: options.forceRefresh || false,
-                };
-                try {
-                    const response = await instance.acquireTokenSilent(request);
-                    return response.accessToken;
-                } catch (error) {
-                    if (error instanceof InteractionRequiredAuthError) {
-                        await instance.acquireTokenRedirect({
-                            scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
-                            account: accounts[0],
-                        });
-                        return null;
-                    }
-                    console.warn("Silent token acquisition failed", error);
-                    return null;
-                }
+            // Fix Bug #1: No accounts cached (e.g., after hard refresh with expired tokens)
+            // Clear cache and redirect to login instead of silently returning null
+            if (accounts.length === 0) {
+                console.error("[AUTH] No accounts found - clearing cache and redirecting to login");
+                await instance.clearCache();
+                await instance.loginRedirect({
+                    scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`]
+                });
+                // Redirect navigates away, code never returns
+                return null;
             }
-            return null;
+
+            const request = {
+                scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
+                account: accounts[0],
+                forceRefresh: options.forceRefresh || false,
+            };
+
+            try {
+                const response = await instance.acquireTokenSilent(request);
+                return response.accessToken;
+            } catch (error) {
+                // Fix Bug #2: ANY token acquisition failure triggers redirect
+                // Don't check error type - fragile and misses edge cases (BrowserAuthError, etc.)
+                // Clear stale cache to ensure clean re-authentication
+                console.error("[AUTH] Token acquisition failed - clearing cache and redirecting to login", {
+                    errorType: error.constructor.name,
+                    errorMessage: error.message
+                });
+                await instance.clearCache();
+                await instance.loginRedirect({
+                    scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`]
+                });
+                // Redirect navigates away, code never returns
+                return null;
+            }
         });
     }, [instance, accounts]);
 

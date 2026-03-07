@@ -49,11 +49,12 @@ async function fetchApi(endpoint, options = {}) {
 
     // On 401, force a fresh token and retry once
     if (response.status === 401 && !options._retried) {
+        console.error("[API] Received 401 - attempting token refresh");
         let freshToken = null;
         try {
             freshToken = await getAccessToken({ forceRefresh: true });
         } catch (e) {
-            console.error("Failed to refresh token on 401", e);
+            console.error("[API] Token refresh failed", e);
         }
         if (freshToken) {
             headers['Authorization'] = `Bearer ${freshToken}`;
@@ -67,6 +68,8 @@ async function fetchApi(endpoint, options = {}) {
             }
             return retryResponse.json();
         }
+        // No fresh token available - redirect to login already triggered in App.jsx
+        // Fall through to error below
     }
 
     if (!response.ok) {
