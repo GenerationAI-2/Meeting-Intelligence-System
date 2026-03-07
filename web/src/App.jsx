@@ -21,14 +21,15 @@ function AuthenticationHandler({ children }) {
 
     useEffect(() => {
         setAccessTokenProvider(async (options = {}) => {
-            console.error("[AUTH DIAGNOSTIC] getAccessToken called", {
-                hasAccounts: accounts.length > 0,
-                accountCount: accounts.length,
-                forceRefresh: options.forceRefresh || false
-            });
-
+            // Fix Bug #1: No accounts cached (e.g., after hard refresh with expired tokens)
+            // Clear cache and redirect to login instead of silently returning null
             if (accounts.length === 0) {
-                console.error("[AUTH DIAGNOSTIC] No accounts found - returning null (THIS IS THE BUG IF YOU SEE THIS)");
+                console.error("[AUTH] No accounts found - clearing cache and redirecting to login");
+                await instance.clearCache();
+                await instance.loginRedirect({
+                    scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`]
+                });
+                // Redirect navigates away, code never returns
                 return null;
             }
 
@@ -38,34 +39,22 @@ function AuthenticationHandler({ children }) {
                 forceRefresh: options.forceRefresh || false,
             };
 
-            console.error("[AUTH DIAGNOSTIC] Calling acquireTokenSilent with", {
-                scopes: request.scopes,
-                forceRefresh: request.forceRefresh,
-                accountUsername: accounts[0].username
-            });
-
             try {
                 const response = await instance.acquireTokenSilent(request);
-                console.error("[AUTH DIAGNOSTIC] acquireTokenSilent SUCCESS - returning token");
                 return response.accessToken;
             } catch (error) {
-                console.error("[AUTH DIAGNOSTIC] acquireTokenSilent FAILED", {
+                // Fix Bug #2: ANY token acquisition failure triggers redirect
+                // Don't check error type - fragile and misses edge cases (BrowserAuthError, etc.)
+                // Clear stale cache to ensure clean re-authentication
+                console.error("[AUTH] Token acquisition failed - clearing cache and redirecting to login", {
                     errorType: error.constructor.name,
-                    errorMessage: error.message,
-                    isInteractionRequired: error instanceof InteractionRequiredAuthError
+                    errorMessage: error.message
                 });
-
-                if (error instanceof InteractionRequiredAuthError) {
-                    console.error("[AUTH DIAGNOSTIC] Calling acquireTokenRedirect...");
-                    await instance.acquireTokenRedirect({
-                        scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`],
-                        account: accounts[0],
-                    });
-                    console.error("[AUTH DIAGNOSTIC] acquireTokenRedirect called - returning null (redirect should happen)");
-                    return null;
-                }
-
-                console.error("[AUTH DIAGNOSTIC] Non-InteractionRequiredAuthError caught - returning null (THIS IS THE BUG - NO REDIRECT!)");
+                await instance.clearCache();
+                await instance.loginRedirect({
+                    scopes: [`api://${import.meta.env.VITE_API_CLIENT_ID}/access_as_user`]
+                });
+                // Redirect navigates away, code never returns
                 return null;
             }
         });

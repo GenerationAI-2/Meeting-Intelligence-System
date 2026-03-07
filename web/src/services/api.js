@@ -49,19 +49,14 @@ async function fetchApi(endpoint, options = {}) {
 
     // On 401, force a fresh token and retry once
     if (response.status === 401 && !options._retried) {
-        console.error("[API DIAGNOSTIC] Received 401 - attempting token refresh");
+        console.error("[API] Received 401 - attempting token refresh");
         let freshToken = null;
         try {
             freshToken = await getAccessToken({ forceRefresh: true });
-            console.error("[API DIAGNOSTIC] getAccessToken returned", {
-                hasToken: !!freshToken,
-                tokenPreview: freshToken ? freshToken.substring(0, 20) + '...' : null
-            });
         } catch (e) {
-            console.error("[API DIAGNOSTIC] getAccessToken threw exception", e);
+            console.error("[API] Token refresh failed", e);
         }
         if (freshToken) {
-            console.error("[API DIAGNOSTIC] Retrying request with fresh token");
             headers['Authorization'] = `Bearer ${freshToken}`;
             const retryResponse = await fetch(url, {
                 ...options,
@@ -69,14 +64,12 @@ async function fetchApi(endpoint, options = {}) {
                 _retried: true,
             });
             if (!retryResponse.ok) {
-                console.error("[API DIAGNOSTIC] Retry failed with status", retryResponse.status);
                 throw new Error(`API error: ${retryResponse.status}`);
             }
-            console.error("[API DIAGNOSTIC] Retry succeeded");
             return retryResponse.json();
-        } else {
-            console.error("[API DIAGNOSTIC] No fresh token - falling through to error (THIS IS WHERE USER GETS STUCK)");
         }
+        // No fresh token available - redirect to login already triggered in App.jsx
+        // Fall through to error below
     }
 
     if (!response.ok) {
