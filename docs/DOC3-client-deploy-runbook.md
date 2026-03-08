@@ -217,4 +217,4 @@ Documented failures from battle-testing and real deployments. Internal reference
 
 ---
 
-*Keep this runbook updated when deploy scripts change. Last validated against `deploy-new-client.sh` at commit `a4d2f0e`.*
+*Keep this runbook updated when deploy scripts change. Last validated against `deploy-new-client.sh` at commit `332852f`.*

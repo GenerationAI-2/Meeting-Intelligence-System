@@ -60,7 +60,7 @@ That's it. You can start talking to Claude naturally about your meetings, action
 
 ### Via AI Assistant (Natural Language)
 
-Once connected, just talk to Claude naturally. It has access to 22 tools across meetings, actions, decisions, and workspaces. Examples:
+Once connected, just talk to Claude naturally. It has access to 23 tools across meetings, actions, decisions, and workspaces. Examples:
 
 **Meetings**
 - "What meetings did I have this week?"
