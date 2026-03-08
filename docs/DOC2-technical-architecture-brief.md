@@ -135,6 +135,7 @@ No shared passwords anywhere in the system. All service-to-service auth uses man
 | RBAC | 4-tier role model (viewer/member/chair/org_admin), audit logged |
 | Input validation | Pydantic schemas on all API/MCP inputs, HTML stripping, null byte filtering |
 | Rate limiting | Tiered: MCP 120/min per token, API 60/min per IP |
+| Error handling | 401: clear MSAL cache + redirect to login; 403: auto-switch workspace or show access revoked message |
 | Audit | All data operations logged to `audit_log` table + SQL Server audit to Log Analytics |
 | Headers | X-Content-Type-Options, X-Frame-Options, CSP, Referrer-Policy, Permissions-Policy |
 
