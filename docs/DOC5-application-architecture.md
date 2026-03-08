@@ -269,10 +269,10 @@ React 18 + Vite. Azure AD login via MSAL. 9 pages:
 
 **Key components:**
 
-- **Layout** — App shell with sidebar nav, workspace switcher dropdown, user profile menu
+- **Layout** — App shell with top navbar, workspace switcher dropdown, user profile menu, workspace error banner
 - **WorkspaceSwitcher** — Dropdown that sets `X-Workspace-ID` header on all API calls
-- **WorkspaceContext** — React context for active workspace, permissions, user profile. Triggers refetch on workspace switch via `workspaceVersion` counter.
-- **api.js** — HTTP client with MSAL token provider, workspace header injection, 401 retry
+- **WorkspaceContext** — React context for active workspace, permissions, user profile. Handles 403 errors by auto-switching to available workspace or showing access revoked message. Triggers refetch on workspace switch via `workspaceVersion` counter.
+- **api.js** — HTTP client with MSAL token provider, workspace header injection, 401 (clear MSAL cache + redirect to login), 403 (throw AccessDeniedError for workspace recovery)
 
 ---
 
@@ -293,6 +293,8 @@ Shared between MCP tools and REST API via `get_schema` endpoint — single sourc
 
 ## Error Handling
 
+- **401 Unauthorized (web UI)** — Clear MSAL cache and redirect to login on ANY token acquisition failure. Prevents stuck-on-401 state when access or refresh tokens expire. (Action #1)
+- **403 Forbidden (web UI)** — Catch AccessDeniedError, check available workspaces. If user has other workspaces, auto-switch to first available with warning banner. If no workspaces, show "access revoked, contact admin" message. (Action #2)
 - **Transient Azure SQL errors** — Detected by error code (40613, 40197, 49919, etc.). Exponential backoff retry: 0.5s → 1s → 2s → max 10s.
 - **Fail-closed auth** — Control DB unavailable → 503 (not silent admin escalation).
 - **Tool errors** — Return error dict to MCP client, never stack traces.
