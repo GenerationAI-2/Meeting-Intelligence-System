@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { tokensApi } from '../services/api';
+import ConnectYourAI from '../components/ConnectYourAI';
 
 function Settings() {
     const [tokens, setTokens] = useState([]);
@@ -302,44 +303,11 @@ function Settings() {
                 </table>
             </div>
 
-            {/* Connection Help */}
-            <div className="bg-white border border-gray-200 rounded-lg shadow-sm">
-                <div className="p-4 border-b border-gray-200">
-                    <h2 className="text-lg font-semibold text-gray-900">Connecting Your AI Tools</h2>
-                </div>
-                <div className="p-4 space-y-4 text-sm text-gray-600">
-                    <div>
-                        <h3 className="font-medium text-gray-900 mb-1">Claude.ai</h3>
-                        <p className="mb-1">Add as a custom connector with this URL:</p>
-                        <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
-                            {`${window.location.origin}/mcp?token=YOUR_TOKEN`}
-                        </code>
-                    </div>
-                    <div>
-                        <h3 className="font-medium text-gray-900 mb-1">Claude Desktop</h3>
-                        <p className="mb-2">Add to your Claude Desktop MCP server config:</p>
-                        <pre className="px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all whitespace-pre-wrap">
-{`{
-  "url": "${window.location.origin}/mcp",
-  "headers": {
-    "Authorization": "Bearer YOUR_TOKEN"
-  }
-}`}
-                        </pre>
-                    </div>
-                    <div>
-                        <h3 className="font-medium text-gray-900 mb-1">Other MCP Clients</h3>
-                        <p className="mb-1">Connect to the Streamable HTTP endpoint:</p>
-                        <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded text-xs font-mono break-all">
-                            {`${window.location.origin}/mcp`}
-                        </code>
-                        <p className="mt-1">Authenticate with a <strong>Bearer</strong> token in the Authorization header or an <strong>X-API-Key</strong> header.</p>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-2">
-                        Token revocation may take up to 5 minutes to take effect due to caching.
-                    </p>
-                </div>
-            </div>
+            {/* Connect Your AI */}
+            <ConnectYourAI
+                token={newToken?.token || null}
+                hasActiveTokens={activeTokens.length > 0}
+            />
         </div>
     );
 }
