@@ -519,6 +519,119 @@ def revoke_user_token(engine: Engine, user_email: str, token_id: int) -> bool:
 
 
 # ============================================================================
+# ADMIN TOKEN MANAGEMENT (by user_id, no ownership check)
+# ============================================================================
+
+def list_user_tokens_by_id(engine: Engine, user_id: int) -> dict:
+    """List tokens for a user by user_id. Admin use — no ownership check.
+
+    Returns dict with user email, membership status, and token metadata.
+    """
+    with get_db_for(engine) as cursor:
+        cursor.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            return {"error": True, "code": "NOT_FOUND", "message": "User not found"}
+
+        user_email = user_row[0]
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM workspace_members wm
+            JOIN workspaces w ON w.id = wm.workspace_id
+            WHERE wm.user_id = ? AND w.is_archived = 0
+            """,
+            (user_id,),
+        )
+        has_memberships = cursor.fetchone()[0] > 0
+
+        cursor.execute(
+            """
+            SELECT id, client_name, is_active, created_at, created_by,
+                   expires_at, revoked_at, notes
+            FROM tokens
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        )
+        tokens = rows_to_list(cursor, cursor.fetchall())
+
+    return {
+        "user_email": user_email,
+        "has_memberships": has_memberships,
+        "tokens": tokens,
+        "count": len(tokens),
+    }
+
+
+def create_user_token_by_id(
+    engine: Engine, user_id: int, client_name: str,
+    created_by: str, expires_days: int | None = None
+) -> dict:
+    """Create a token for a user by user_id. Admin use — created_by is the admin.
+
+    Raises ValueError if user not found or has no active memberships.
+    """
+    plaintext = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(plaintext.encode()).hexdigest()
+
+    expires_at = None
+    if expires_days is not None:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+
+    with get_db_for(engine) as cursor:
+        cursor.execute("SELECT id, email FROM users WHERE id = ?", (user_id,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            raise ValueError("User not found")
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM workspace_members wm
+            JOIN workspaces w ON w.id = wm.workspace_id
+            WHERE wm.user_id = ? AND w.is_archived = 0
+            """,
+            (user_id,),
+        )
+        if cursor.fetchone()[0] == 0:
+            raise ValueError("User has no active workspace memberships")
+
+        cursor.execute(
+            """
+            INSERT INTO tokens (token_hash, user_id, client_name, created_by, expires_at)
+            OUTPUT inserted.id, inserted.created_at
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (token_hash, user_id, client_name, created_by, expires_at),
+        )
+        row = cursor.fetchone()
+
+    return {
+        "id": row[0],
+        "token": plaintext,
+        "client_name": client_name,
+        "created_by": created_by,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "created_at": row[1].isoformat() if row[1] else None,
+    }
+
+
+def revoke_user_token_by_id(engine: Engine, user_id: int, token_id: int) -> bool:
+    """Revoke a user's token by user_id + token_id. Admin use — no email ownership check."""
+    with get_db_for(engine) as cursor:
+        cursor.execute(
+            """
+            UPDATE tokens
+            SET is_active = 0, revoked_at = SYSUTCDATETIME()
+            WHERE id = ? AND user_id = ? AND is_active = 1
+            """,
+            (token_id, user_id),
+        )
+        return cursor.rowcount > 0
+
+
+# ============================================================================
 # CONTROL DB TOKEN VALIDATION
 # ============================================================================
 

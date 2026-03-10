@@ -217,4 +217,16 @@ export const workspaceApi = {
         fetchApi(`/admin/workspaces/${wsId}/members/${userId}`, {
             method: 'DELETE',
         }),
+
+    // Admin token management
+    listUserTokens: (userId) => fetchApi(`/admin/users/${userId}/tokens`),
+
+    createUserToken: (userId, data) =>
+        fetchApi(`/admin/users/${userId}/tokens`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    revokeUserToken: (userId, tokenId) =>
+        fetchApi(`/admin/users/${userId}/tokens/${tokenId}`, { method: 'DELETE' }),
 };
