@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from .audit import log_audit
 from .config import get_settings
 from . import database as _db_module
-from .database import get_control_db, get_db_for
+from .database import get_control_db, get_db_for, list_user_tokens_by_id, create_user_token_by_id, revoke_user_token_by_id
 from .dependencies import authenticate_and_store, resolve_workspace
 from .logging_config import get_logger
 from .permissions import check_permission
@@ -705,3 +705,83 @@ async def remove_member(
         )
 
     return {"message": "Member removed", "user_id": user_id}
+
+
+# ==========================================================================
+# Token Management (Org Admin only)
+# ==========================================================================
+
+class AdminTokenCreate(BaseModel):
+    client_name: str = Field(..., min_length=1, max_length=255)
+    expires_days: Optional[int] = Field(None, gt=0, le=365)
+
+
+@admin_router.get("/users/{user_id}/tokens", dependencies=[Depends(_require_workspace_mode)])
+async def admin_list_user_tokens(
+    user_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """List tokens for any user. Org Admin only."""
+    check_permission(ctx, "manage_workspace")
+
+    settings = get_settings()
+    engine = _db_module.engine_registry.get_engine(settings.control_db_name)
+    result = list_user_tokens_by_id(engine, user_id)
+    if result.get("error"):
+        raise HTTPException(404, result["message"])
+
+    return result
+
+
+@admin_router.post("/users/{user_id}/tokens", dependencies=[Depends(_require_workspace_mode)])
+async def admin_create_user_token(
+    user_id: int,
+    body: AdminTokenCreate,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Generate a token on behalf of any user. Org Admin only."""
+    check_permission(ctx, "manage_workspace")
+
+    settings = get_settings()
+    engine = _db_module.engine_registry.get_engine(settings.control_db_name)
+    try:
+        result = create_user_token_by_id(
+            engine, user_id, body.client_name, ctx.user_email, body.expires_days
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    from .audit import audit_data_operation
+    audit_data_operation(
+        ctx, "create", "token", result["id"],
+        f"Admin generated token '{body.client_name}' for user_id={user_id}",
+        auth_method="admin",
+    )
+    return result
+
+
+@admin_router.delete("/users/{user_id}/tokens/{token_id}", dependencies=[Depends(_require_workspace_mode)])
+async def admin_revoke_user_token(
+    user_id: int,
+    token_id: int,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Revoke any user's token. Org Admin only."""
+    check_permission(ctx, "manage_workspace")
+
+    settings = get_settings()
+    engine = _db_module.engine_registry.get_engine(settings.control_db_name)
+    revoked = revoke_user_token_by_id(engine, user_id, token_id)
+    if not revoked:
+        raise HTTPException(404, "Token not found or already revoked")
+
+    from .audit import audit_data_operation
+    audit_data_operation(
+        ctx, "delete", "token", token_id,
+        f"Admin revoked token {token_id} for user_id={user_id}",
+        auth_method="admin",
+    )
+    return {"success": True}
