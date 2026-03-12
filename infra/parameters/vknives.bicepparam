@@ -22,7 +22,7 @@ param azureClientId = 'ae3e863e-6fda-4830-9573-6a774f0a10b8'
 
 // --- Access control ---
 param allowedUsers = 'gareth@victoryknives.co.nz,caleb.lucas@generationai.co.nz'
-param corsOrigins = 'https://placeholder'     // Updated automatically by deploy-new-client.sh Phase 4
+param corsOrigins = 'https://ca-mi-prod-vknives.livelygrass-ced69cec.australiaeast.azurecontainerapps.io'     // Updated automatically by deploy-new-client.sh Phase 4
 param minReplicas = 1
 
 // --- Dynamic params (passed via environment variables at deploy time) ---
