@@ -56,6 +56,9 @@ param cafNaming bool = false
 @description('Environment type for CAF naming (e.g., prod, dev, test)')
 param environmentType string = 'prod'
 
+@description('Override Key Vault name (use when default name is blocked by soft-delete in another subscription)')
+param keyVaultNameOverride string = ''
+
 // === TAGS ===
 
 var tags = {
@@ -74,7 +77,7 @@ var containerAppEnvName = cafNaming ? 'cae-mi-${environmentType}-${environmentNa
 var sqlServerName = cafNaming ? 'sql-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-sql'
 var sqlDatabaseName = cafNaming ? 'sqldb-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}'
 var controlDbName = cafNaming ? 'sqldb-mi-${environmentType}-${environmentName}-control' : 'mi-${environmentName}-control'
-var keyVaultName = cafNaming ? 'kv-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-kv'
+var keyVaultName = !empty(keyVaultNameOverride) ? keyVaultNameOverride : (cafNaming ? 'kv-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-kv')
 var logAnalyticsName = cafNaming ? 'log-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-logs'
 var appInsightsName = cafNaming ? 'appi-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-insights'
 var budgetName = cafNaming ? 'budget-mi-${environmentType}-${environmentName}' : 'mi-${environmentName}-monthly'
