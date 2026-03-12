@@ -42,8 +42,8 @@ done
 # Client environments deploy after internal passes.
 INTERNAL_ENVS=("genai")
 CLIENT_ENVS=("testing-instance" "marshall")
-# Add new environments here:
-# CLIENT_ENVS=("testing-instance" "marshall" "client2")
+# CAF-named clients (fero, victory-knives) use deploy-bicep.sh directly.
+# deploy-all.sh uses legacy resource group naming and is not compatible with CAF envs.
 
 ACR_NAME="meetingintelacr20260116"
 

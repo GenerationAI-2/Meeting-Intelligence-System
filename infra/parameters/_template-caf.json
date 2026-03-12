@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "cafNaming": {
+      "value": true
+    },
+    "environmentType": {
+      "value": "prod"
+    },
+    "environmentName": {
+      "value": "<CLIENT_NAME>"
+    },
+    "location": {
+      "value": "australiaeast"
+    },
+    "acrName": {
+      "value": "meetingintelacr20260116"
+    },
+    "sqlAdminObjectId": {
+      "value": "<SQL_ADMIN_OBJECT_ID>"
+    },
+    "sqlAdminDisplayName": {
+      "value": "<SQL_ADMIN_NAME>"
+    },
+    "azureTenantId": {
+      "value": "<AZURE_TENANT_ID>"
+    },
+    "azureClientId": {
+      "value": "<APP_REGISTRATION_CLIENT_ID>"
+    },
+    "allowedUsers": {
+      "value": "<EMAIL_1>,<EMAIL_2>"
+    },
+    "corsOrigins": {
+      "value": "https://placeholder"
+    },
+    "minReplicas": {
+      "value": 1
+    },
+    "containerImageTag": {
+      "value": "test"
+    },
+    "appInsightsConnection": {
+      "value": ""
+    }
+  }
+}

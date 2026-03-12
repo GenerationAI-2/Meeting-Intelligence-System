@@ -130,6 +130,10 @@ CLIENT_ID=$(grep "param azureClientId" "$PARAM_FILE" | sed "s/.*= '//;s/'.*//")
 ALLOWED_USERS=$(grep "param allowedUsers" "$PARAM_FILE" | sed "s/.*= '//;s/'.*//")
 # First email in allowedUsers is the primary client contact
 PRIMARY_EMAIL=$(echo "$ALLOWED_USERS" | cut -d',' -f1 | xargs)
+# Deployer email — override with DEPLOYER_EMAIL env var if needed
+DEPLOYER_EMAIL="${DEPLOYER_EMAIL:-caleb.lucas@generationai.co.nz}"
+# Workspace display name — override with WORKSPACE_DISPLAY_NAME env var if needed
+WORKSPACE_DISPLAY_NAME="${WORKSPACE_DISPLAY_NAME:-General}"
 
 # =========================================================================
 # SQL FIREWALL: Cleanup trap for temporary deployer IP rule
@@ -517,7 +521,7 @@ echo "--- Step 2e: Seed General workspace ---"
 SEED_SQL="IF NOT EXISTS (SELECT 1 FROM workspaces WHERE name = 'general')
 BEGIN
     INSERT INTO workspaces (name, display_name, db_name, is_default, created_by)
-    VALUES ('general', 'General', '${SQL_DATABASE}', 1, 'system@generationai.co.nz');
+    VALUES ('general', '${WORKSPACE_DISPLAY_NAME}', '${SQL_DATABASE}', 1, '${DEPLOYER_EMAIL}');
     PRINT 'General workspace seeded';
 END
 ELSE
@@ -525,6 +529,52 @@ ELSE
 
 if ! run_sql_against_db "$CONTROL_DATABASE" "$SEED_SQL" "Seed General workspace"; then
     DB_INIT_OK=false
+fi
+echo ""
+
+# Step 2f: Seed deployer as org_admin with chair role on General workspace
+echo "--- Step 2f: Seed deployer as org_admin ---"
+if [ "$DEPLOYER_EMAIL" = "$PRIMARY_EMAIL" ]; then
+    echo "  Deployer is primary user (${DEPLOYER_EMAIL}) — will be seeded in Phase 3 token generation"
+else
+    DEPLOYER_USER_SQL="IF NOT EXISTS (SELECT 1 FROM users WHERE email = '${DEPLOYER_EMAIL}')
+BEGIN
+    INSERT INTO users (email, display_name, is_org_admin, created_by)
+    VALUES ('${DEPLOYER_EMAIL}', '${DEPLOYER_EMAIL}', 1, '${DEPLOYER_EMAIL}');
+    PRINT 'Deployer user created as org_admin';
+END
+ELSE
+BEGIN
+    UPDATE users SET is_org_admin = 1 WHERE email = '${DEPLOYER_EMAIL}';
+    PRINT 'Deployer user already exists -- ensured org_admin';
+END"
+
+    if ! run_sql_against_db "$CONTROL_DATABASE" "$DEPLOYER_USER_SQL" "Deployer user (org_admin)"; then
+        echo "  WARNING: Deployer user seeding failed — add manually post-deploy"
+    fi
+
+    DEPLOYER_MEMBER_SQL="IF NOT EXISTS (
+    SELECT 1 FROM workspace_members wm
+    INNER JOIN users u ON u.id = wm.user_id
+    INNER JOIN workspaces w ON w.id = wm.workspace_id
+    WHERE u.email = '${DEPLOYER_EMAIL}' AND w.name = 'general'
+)
+BEGIN
+    INSERT INTO workspace_members (user_id, workspace_id, role, added_by)
+    VALUES (
+        (SELECT id FROM users WHERE email = '${DEPLOYER_EMAIL}'),
+        (SELECT id FROM workspaces WHERE name = 'general'),
+        'chair',
+        '${DEPLOYER_EMAIL}'
+    );
+    PRINT 'Deployer added as chair on General workspace';
+END
+ELSE
+    PRINT 'Deployer already a member of General workspace -- skipping';"
+
+    if ! run_sql_against_db "$CONTROL_DATABASE" "$DEPLOYER_MEMBER_SQL" "Deployer workspace membership"; then
+        echo "  WARNING: Deployer membership seeding failed — add manually post-deploy"
+    fi
 fi
 echo ""
 
