@@ -15,7 +15,7 @@ def list_meetings(
     cursor: pyodbc.Cursor,
     ctx: WorkspaceContext,
     limit: int = 20,
-    days_back: int = 30,
+    days_back: Optional[int] = None,
     attendee: Optional[str] = None,
     tag: Optional[str] = None
 ) -> dict:
@@ -26,11 +26,15 @@ def list_meetings(
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Limit must be at least 1"}
     if limit > 100:
         limit = 100
-    if days_back < 1:
+    if days_back is not None and days_back < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "days_back must be at least 1"}
 
-    conditions = ["MeetingDate >= DATEADD(day, -?, GETUTCDATE())"]
-    params = [days_back]
+    conditions = []
+    params = []
+
+    if days_back is not None:
+        conditions.append("MeetingDate >= DATEADD(day, -?, GETUTCDATE())")
+        params.append(days_back)
 
     if attendee:
         conditions.append("Attendees LIKE ?")
@@ -42,10 +46,12 @@ def list_meetings(
 
     params.append(limit)
 
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
     cursor.execute(f"""
         SELECT MeetingId, Title, MeetingDate, Attendees, Source, Tags
         FROM Meeting
-        WHERE {' AND '.join(conditions)}
+        {where_clause}
         ORDER BY MeetingDate DESC
         OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
     """, tuple(params))

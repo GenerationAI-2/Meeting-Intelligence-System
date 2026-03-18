@@ -279,14 +279,16 @@ async def revoke_token_endpoint(
 async def list_meetings_endpoint(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    days_back: int = Query(30, ge=1),
+    days_back: Optional[int] = Query(None, ge=1),
     user: str = Depends(authenticate_and_store),
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """List meetings with pagination."""
     logger.info("List meetings", extra={"user": user, "limit": limit, "days_back": days_back})
-    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.list_meetings, ctx,
-                             limit=limit, days_back=days_back)
+    kwargs = {"limit": limit}
+    if days_back is not None:
+        kwargs["days_back"] = days_back
+    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.list_meetings, ctx, **kwargs)
     if result.get("error"):
         logger.error("List meetings failed", extra={"code": result.get("code"), "message": result.get("message")})
         raise HTTPException(status_code=400, detail=result["message"])
