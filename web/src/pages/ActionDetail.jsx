@@ -6,13 +6,15 @@ import { useWorkspace } from '../contexts/WorkspaceContext';
 function ActionDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { permissions } = useWorkspace();
+    const { permissions, userEmail } = useWorkspace();
     const [action, setAction] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [editing, setEditing] = useState(false);
     const [editForm, setEditForm] = useState({});
     const [saving, setSaving] = useState(false);
+    const [pendingStatus, setPendingStatus] = useState(null);
+    const [statusNote, setStatusNote] = useState('');
 
     useEffect(() => {
         loadAction();
@@ -30,10 +32,19 @@ function ActionDetail() {
         }
     }
 
-    async function handleStatusChange(newStatus) {
+    function handleStatusClick(newStatus) {
+        if (newStatus === action.status) return;
+        setPendingStatus(newStatus);
+        setStatusNote('');
+    }
+
+    async function confirmStatusChange() {
         try {
-            await actionsApi.updateStatus(id, newStatus);
-            setAction({ ...action, status: newStatus });
+            const note = statusNote.trim() || null;
+            await actionsApi.updateStatus(id, pendingStatus, note);
+            await loadAction();
+            setPendingStatus(null);
+            setStatusNote('');
         } catch (err) {
             console.error('Failed to update status:', err);
         }
@@ -174,7 +185,7 @@ function ActionDetail() {
                         <div className="flex items-start justify-between mb-4">
                             <h1 className="text-xl font-bold text-gray-900">Action</h1>
                             <div className="flex items-center gap-2">
-                                {permissions.can_write && (
+                                {permissions.can_write && (permissions.is_chair_or_admin || action.created_by === userEmail) && (
                                     <button onClick={startEditing} className="btn-secondary text-sm">
                                         Edit
                                     </button>
@@ -231,7 +242,7 @@ function ActionDetail() {
                                 <label className="block text-sm font-medium text-gray-700 mb-2">Update Status</label>
                                 <div className="flex gap-2">
                                     <button
-                                        onClick={() => handleStatusChange('Open')}
+                                        onClick={() => handleStatusClick('Open')}
                                         className={`px-4 py-2 rounded-lg text-sm font-medium ${
                                             action.status === 'Open'
                                                 ? 'bg-blue-600 text-white'
@@ -241,7 +252,7 @@ function ActionDetail() {
                                         Open
                                     </button>
                                     <button
-                                        onClick={() => handleStatusChange('Complete')}
+                                        onClick={() => handleStatusClick('Complete')}
                                         className={`px-4 py-2 rounded-lg text-sm font-medium ${
                                             action.status === 'Complete'
                                                 ? 'bg-green-600 text-white'
@@ -251,7 +262,7 @@ function ActionDetail() {
                                         Complete
                                     </button>
                                     <button
-                                        onClick={() => handleStatusChange('Parked')}
+                                        onClick={() => handleStatusClick('Parked')}
                                         className={`px-4 py-2 rounded-lg text-sm font-medium ${
                                             action.status === 'Parked'
                                                 ? 'bg-yellow-600 text-white'
@@ -261,6 +272,36 @@ function ActionDetail() {
                                         Parked
                                     </button>
                                 </div>
+
+                                {/* Status change confirmation with optional note */}
+                                {pendingStatus && (
+                                    <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                                        <p className="text-sm text-gray-600 mb-2">
+                                            Change status to <span className="font-medium">{pendingStatus}</span>
+                                        </p>
+                                        <textarea
+                                            value={statusNote}
+                                            onChange={(e) => setStatusNote(e.target.value)}
+                                            rows={2}
+                                            placeholder="Add a note (optional)"
+                                            className="w-full rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2 text-sm mb-2"
+                                        />
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={confirmStatusChange}
+                                                className="btn-primary text-sm"
+                                            >
+                                                Confirm
+                                            </button>
+                                            <button
+                                                onClick={() => { setPendingStatus(null); setStatusNote(''); }}
+                                                className="btn-secondary text-sm"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 

@@ -189,6 +189,53 @@ def create_decision(
     }
 
 
+def update_decision(
+    cursor: pyodbc.Cursor,
+    ctx: WorkspaceContext,
+    decision_id: int,
+    decision_text: Optional[str] = None,
+    context: Optional[str] = None
+) -> dict:
+    """Update an existing decision. Only provided fields are updated."""
+    if not isinstance(decision_id, int) or decision_id < 1:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "decision_id must be a positive integer"}
+
+    # Fetch for existence + ownership check
+    cursor.execute("SELECT DecisionId, CreatedBy FROM Decision WHERE DecisionId = ?", (decision_id,))
+    row = cursor.fetchone()
+    if not row:
+        return {"error": True, "code": "NOT_FOUND", "message": f"Decision with ID {decision_id} not found"}
+
+    check_permission(ctx, "update", {"created_by": row[1]})
+
+    # Build dynamic update
+    updates = []
+    params = []
+
+    if decision_text is not None:
+        if len(decision_text.strip()) == 0:
+            return {"error": True, "code": "VALIDATION_ERROR", "message": "decision_text cannot be empty"}
+        updates.append("DecisionText = ?")
+        params.append(decision_text)
+
+    if context is not None:
+        updates.append("Context = ?")
+        params.append(context)
+
+    if not updates:
+        return {"error": True, "code": "VALIDATION_ERROR", "message": "No fields to update"}
+
+    params.append(decision_id)
+
+    cursor.execute(f"""
+        UPDATE Decision
+        SET {', '.join(updates)}
+        WHERE DecisionId = ?
+    """, tuple(params))
+
+    return get_decision(cursor, ctx, decision_id)
+
+
 def delete_decision(
     cursor: pyodbc.Cursor,
     ctx: WorkspaceContext,

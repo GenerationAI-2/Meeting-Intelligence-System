@@ -145,6 +145,11 @@ class DecisionCreate(BaseModel):
     context: Optional[str] = Field(None, max_length=5000)
 
 
+class DecisionUpdate(BaseModel):
+    decision_text: Optional[str] = Field(None, min_length=1, max_length=5000)
+    context: Optional[str] = Field(None, max_length=5000)
+
+
 class MeetingUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=500)
     summary: Optional[str] = Field(None, max_length=50000)
@@ -385,11 +390,11 @@ async def update_action_status_endpoint(
     eng = _get_engine_for_ctx(ctx)
 
     if update.status == "Complete":
-        result = call_with_retry(eng, actions.complete_action, ctx, action_id=action_id)
+        result = call_with_retry(eng, actions.complete_action, ctx, action_id=action_id, notes=update.notes)
     elif update.status == "Parked":
-        result = call_with_retry(eng, actions.park_action, ctx, action_id=action_id)
+        result = call_with_retry(eng, actions.park_action, ctx, action_id=action_id, notes=update.notes)
     elif update.status == "Open":
-        result = call_with_retry(eng, actions.reopen_action, ctx, action_id=action_id)
+        result = call_with_retry(eng, actions.reopen_action, ctx, action_id=action_id, notes=update.notes)
     else:
         raise HTTPException(
             status_code=400,
@@ -499,6 +504,29 @@ async def create_decision_endpoint(
             raise HTTPException(status_code=403, detail=result["message"])
         raise HTTPException(status_code=400, detail=result["message"])
     audit_data_operation(ctx, "create", "decision", result.get("id"), auth_method="web")
+    return result
+
+
+@app.patch("/api/decisions/{decision_id}")
+async def update_decision_endpoint(
+    decision_id: int,
+    body: DecisionUpdate,
+    user: str = Depends(authenticate_and_store),
+    ctx: WorkspaceContext = Depends(resolve_workspace),
+):
+    """Update a decision's text or context."""
+    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.update_decision, ctx,
+                             decision_id=decision_id,
+                             decision_text=body.decision_text,
+                             context=body.context)
+    if isinstance(result, dict) and result.get("error"):
+        code = result.get("code", "")
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["message"])
+        if code == "FORBIDDEN":
+            raise HTTPException(status_code=403, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+    audit_data_operation(ctx, "update", "decision", decision_id, auth_method="web")
     return result
 
 

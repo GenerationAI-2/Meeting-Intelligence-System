@@ -302,81 +302,63 @@ def update_action(
     return get_action(cursor, ctx, action_id)
 
 
-def complete_action(
-    cursor: pyodbc.Cursor,
-    ctx: WorkspaceContext,
-    action_id: int
-) -> dict:
-    """Mark an action as complete."""
+def _update_status(cursor, ctx, action_id, new_status, notes=None):
+    """Internal helper to update action status with optional notes."""
     if not isinstance(action_id, int) or action_id < 1:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}
 
-    # Fetch for existence + ownership check
-    cursor.execute("SELECT ActionId, CreatedBy FROM Action WHERE ActionId = ?", (action_id,))
+    cursor.execute("SELECT ActionId FROM Action WHERE ActionId = ?", (action_id,))
     row = cursor.fetchone()
     if not row:
         return {"error": True, "code": "NOT_FOUND", "message": f"Action with ID {action_id} not found"}
 
-    check_permission(ctx, "update", {"created_by": row[1]})
+    check_permission(ctx, "update_status")
 
-    cursor.execute("""
-        UPDATE Action
-        SET Status = 'Complete', UpdatedAt = ?, UpdatedBy = ?
-        WHERE ActionId = ?
-    """, (datetime.utcnow(), ctx.user_email, action_id))
+    now = datetime.utcnow()
+    if notes is not None:
+        cursor.execute("""
+            UPDATE Action
+            SET Status = ?, Notes = ?, UpdatedAt = ?, UpdatedBy = ?
+            WHERE ActionId = ?
+        """, (new_status, notes, now, ctx.user_email, action_id))
+    else:
+        cursor.execute("""
+            UPDATE Action
+            SET Status = ?, UpdatedAt = ?, UpdatedBy = ?
+            WHERE ActionId = ?
+        """, (new_status, now, ctx.user_email, action_id))
 
     return get_action(cursor, ctx, action_id)
+
+
+def complete_action(
+    cursor: pyodbc.Cursor,
+    ctx: WorkspaceContext,
+    action_id: int,
+    notes: Optional[str] = None
+) -> dict:
+    """Mark an action as complete."""
+    return _update_status(cursor, ctx, action_id, "Complete", notes)
 
 
 def park_action(
     cursor: pyodbc.Cursor,
     ctx: WorkspaceContext,
-    action_id: int
+    action_id: int,
+    notes: Optional[str] = None
 ) -> dict:
     """Park an action (put on hold)."""
-    if not isinstance(action_id, int) or action_id < 1:
-        return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}
-
-    # Fetch for existence + ownership check
-    cursor.execute("SELECT ActionId, CreatedBy FROM Action WHERE ActionId = ?", (action_id,))
-    row = cursor.fetchone()
-    if not row:
-        return {"error": True, "code": "NOT_FOUND", "message": f"Action with ID {action_id} not found"}
-
-    check_permission(ctx, "update", {"created_by": row[1]})
-
-    cursor.execute("""
-        UPDATE Action
-        SET Status = 'Parked', UpdatedAt = ?, UpdatedBy = ?
-        WHERE ActionId = ?
-    """, (datetime.utcnow(), ctx.user_email, action_id))
-
-    return get_action(cursor, ctx, action_id)
+    return _update_status(cursor, ctx, action_id, "Parked", notes)
 
 
 def reopen_action(
     cursor: pyodbc.Cursor,
     ctx: WorkspaceContext,
-    action_id: int
+    action_id: int,
+    notes: Optional[str] = None
 ) -> dict:
     """Set action status back to Open."""
-    if not isinstance(action_id, int) or action_id < 1:
-        return {"error": True, "code": "VALIDATION_ERROR", "message": "action_id must be a positive integer"}
-
-    # Fetch for existence + ownership check
-    cursor.execute("SELECT ActionId, CreatedBy FROM Action WHERE ActionId = ?", (action_id,))
-    row = cursor.fetchone()
-    if not row:
-        return {"error": True, "code": "NOT_FOUND", "message": f"Action with ID {action_id} not found"}
-
-    check_permission(ctx, "update", {"created_by": row[1]})
-
-    cursor.execute("""
-        UPDATE Action SET Status = 'Open', UpdatedAt = ?, UpdatedBy = ?
-        WHERE ActionId = ?
-    """, (datetime.utcnow(), ctx.user_email, action_id))
-
-    return get_action(cursor, ctx, action_id)
+    return _update_status(cursor, ctx, action_id, "Open", notes)
 
 
 def delete_action(

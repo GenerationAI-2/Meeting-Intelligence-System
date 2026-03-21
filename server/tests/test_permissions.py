@@ -71,6 +71,13 @@ class TestViewerPermissions:
             check_permission(ctx, "update", {"created_by": "user@example.com"})
         assert exc_info.value.status_code == 403
 
+    def test_viewer_cannot_update_status(self):
+        ctx = _make_ctx(role="viewer")
+        with pytest.raises(HTTPException) as exc_info:
+            check_permission(ctx, "update_status")
+        assert exc_info.value.status_code == 403
+        assert "Viewers cannot update item status" in str(exc_info.value.detail)
+
     def test_viewer_cannot_delete(self):
         ctx = _make_ctx(role="viewer")
         with pytest.raises(HTTPException) as exc_info:
@@ -107,6 +114,15 @@ class TestMemberPermissions:
         ctx = _make_ctx(role="member")
         check_permission(ctx, "update")  # no entity = no ownership check
 
+    def test_member_can_update_status_own(self):
+        ctx = _make_ctx(role="member")
+        check_permission(ctx, "update_status")  # no entity needed for status changes
+
+    def test_member_can_update_status_others(self):
+        """Members can change status on any action — status changes are collaborative."""
+        ctx = _make_ctx(role="member")
+        check_permission(ctx, "update_status")
+
     def test_member_cannot_delete(self):
         ctx = _make_ctx(role="member")
         with pytest.raises(HTTPException) as exc_info:
@@ -135,6 +151,10 @@ class TestChairPermissions:
     def test_chair_can_update_any(self):
         ctx = _make_ctx(role="chair")
         check_permission(ctx, "update", {"created_by": "other@example.com"})
+
+    def test_chair_can_update_status(self):
+        ctx = _make_ctx(role="chair")
+        check_permission(ctx, "update_status")
 
     def test_chair_can_delete(self):
         ctx = _make_ctx(role="chair")
@@ -219,6 +239,13 @@ class TestArchivedWorkspace:
         with pytest.raises(HTTPException) as exc_info:
             check_permission(ctx, "update")
         assert exc_info.value.status_code == 403
+
+    def test_archived_blocks_update_status(self):
+        ctx = _make_ctx(role="chair", is_archived=True)
+        with pytest.raises(HTTPException) as exc_info:
+            check_permission(ctx, "update_status")
+        assert exc_info.value.status_code == 403
+        assert "archived" in str(exc_info.value.detail).lower()
 
     def test_archived_blocks_delete(self):
         ctx = _make_ctx(role="chair", is_archived=True)

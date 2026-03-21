@@ -9,6 +9,7 @@ export function WorkspaceProvider({ children }) {
     const [workspaces, setWorkspaces] = useState([]);
     const [activeWorkspace, setActiveWorkspace] = useState(null);
     const [permissions, setPermissions] = useState({ can_write: false, is_chair_or_admin: false });
+    const [userEmail, setUserEmail] = useState(null);
     const [isOrgAdmin, setIsOrgAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -24,6 +25,7 @@ export function WorkspaceProvider({ children }) {
             setWorkspaces(data.workspaces || []);
             setActiveWorkspace(data.active_workspace || null);
             setPermissions(data.permissions || { can_write: false, is_chair_or_admin: false });
+            setUserEmail(data.email || null);
             setIsOrgAdmin(data.is_org_admin || false);
             setError(null);
 
@@ -62,6 +64,7 @@ export function WorkspaceProvider({ children }) {
                         setWorkspaces(updatedData.workspaces || []);
                         setActiveWorkspace(updatedData.active_workspace || null);
                         setPermissions(updatedData.permissions || { can_write: false, is_chair_or_admin: false });
+                        setUserEmail(updatedData.email || null);
                         setIsOrgAdmin(updatedData.is_org_admin || false);
                     } else {
                         // User has no workspaces - complete access revocation
@@ -70,6 +73,7 @@ export function WorkspaceProvider({ children }) {
                         setWorkspaces([]);
                         setActiveWorkspace(null);
                         setPermissions({ can_write: false, is_chair_or_admin: false });
+                        setUserEmail(null);
                         setIsOrgAdmin(false);
                     }
                 } catch (retryErr) {
@@ -113,6 +117,7 @@ export function WorkspaceProvider({ children }) {
         workspaces,
         activeWorkspace,
         permissions,
+        userEmail,
         isOrgAdmin,
         loading,
         error,
@@ -136,6 +141,7 @@ export function useWorkspace() {
             workspaces: [],
             activeWorkspace: null,
             permissions: { can_write: true, is_chair_or_admin: false },
+            userEmail: null,
             isOrgAdmin: false,
             loading: false,
             error: null,

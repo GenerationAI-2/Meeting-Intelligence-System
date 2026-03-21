@@ -40,7 +40,13 @@ def check_permission(ctx: WorkspaceContext, operation: str, entity: dict = None)
             raise HTTPException(403, "Viewers cannot create items")
         return
 
-    # Update: member (own only) + chair (any)
+    # Update status: member (any) + chair (any) — status changes are collaborative
+    if operation == 'update_status':
+        if role == 'viewer':
+            raise HTTPException(403, "Viewers cannot update item status")
+        return
+
+    # Update content: member (own only) + chair (any)
     if operation == 'update':
         if role == 'viewer':
             raise HTTPException(403, "Viewers cannot edit items")

@@ -137,10 +137,10 @@ export const actionsApi = {
             body: JSON.stringify(data),
         }),
 
-    updateStatus: (id, status) =>
+    updateStatus: (id, status, notes = null) =>
         fetchApi(`/actions/${id}/status`, {
             method: 'PATCH',
-            body: JSON.stringify({ status }),
+            body: JSON.stringify(notes ? { status, notes } : { status }),
         }),
 
     owners: () => fetchApi('/actions/owners'),
@@ -160,6 +160,12 @@ export const decisionsApi = {
     create: (data) =>
         fetchApi('/decisions', {
             method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    update: (id, data) =>
+        fetchApi(`/decisions/${id}`, {
+            method: 'PATCH',
             body: JSON.stringify(data),
         }),
 

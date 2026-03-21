@@ -252,6 +252,16 @@ class DecisionCreate(BaseModel):
         return strip_html_tags(v) if v else v
 
 
+class DecisionUpdate(BaseModel):
+    decision_text: Optional[str] = Field(None, min_length=1, max_length=10000)
+    context: Optional[str] = Field(None, max_length=10000)
+
+    @field_validator('decision_text', 'context')
+    @classmethod
+    def sanitise_text(cls, v):
+        return strip_html_tags(v) if v else v
+
+
 class DecisionId(BaseModel):
     decision_id: int = Field(..., gt=0, description="Decision ID (positive integer)")
 
@@ -265,6 +275,8 @@ class DecisionListFilter(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str = Field(..., description="New status value")
+    notes: Optional[str] = Field(None, max_length=10000,
+                                 description="Optional note for the status change")
 
     @field_validator('status')
     @classmethod
@@ -273,3 +285,8 @@ class StatusUpdate(BaseModel):
         if v not in valid:
             raise ValueError(f"Status must be one of: {', '.join(sorted(valid))}")
         return v
+
+    @field_validator('notes')
+    @classmethod
+    def sanitise_notes(cls, v):
+        return strip_html_tags(v) if v else v
