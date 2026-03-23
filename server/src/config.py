@@ -1,10 +1,8 @@
 """Meeting Intelligence MCP Server - Configuration"""
 
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict, Field
 from functools import lru_cache
-
-
-from pydantic import Field
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -23,6 +21,9 @@ class Settings(BaseSettings):
 
     # CORS origins (comma-separated URLs)
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
+
+    # Branding
+    favicon_path: str = ""  # Absolute path to per-client favicon (PNG). Empty = default favicon.svg.
 
     # Observability (optional but recommended for production)
     applicationinsights_connection_string: str = ""  # Get from Azure Portal > Application Insights > Connection String
@@ -43,10 +44,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"  # Ignore deprecated env vars
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",  # Ignore deprecated env vars
+    )
 
 
 @lru_cache

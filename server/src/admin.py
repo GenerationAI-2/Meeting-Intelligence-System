@@ -164,10 +164,12 @@ def _create_workspace_database(sql_server: str, db_name: str) -> None:
         f"SERVER={sql_server};"
         f"DATABASE=master;"
         f"Encrypt=yes;TrustServerCertificate=no;"
+        f"Connection Timeout=30;"
     )
     SQL_COPT_SS_ACCESS_TOKEN = 1256
     conn = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
     conn.autocommit = True
+    conn.timeout = 60  # Command timeout for DDL operations
     try:
         cursor = conn.cursor()
         # Basic tier, 2GB — matches existing workspace databases
@@ -188,10 +190,12 @@ def _drop_workspace_database(sql_server: str, db_name: str) -> None:
         f"SERVER={sql_server};"
         f"DATABASE=master;"
         f"Encrypt=yes;TrustServerCertificate=no;"
+        f"Connection Timeout=30;"
     )
     SQL_COPT_SS_ACCESS_TOKEN = 1256
     conn = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
     conn.autocommit = True
+    conn.timeout = 60  # Command timeout for DDL operations
     try:
         cursor = conn.cursor()
         cursor.execute(f"DROP DATABASE [{db_name}]")
@@ -260,10 +264,12 @@ def _grant_mi_access(sql_server: str, db_name: str) -> None:
         f"SERVER={sql_server};"
         f"DATABASE={db_name};"
         f"Encrypt=yes;TrustServerCertificate=no;"
+        f"Connection Timeout=30;"
     )
     SQL_COPT_SS_ACCESS_TOKEN = 1256
     conn = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
     conn.autocommit = True
+    conn.timeout = 60  # Command timeout for DDL operations
     try:
         cursor = conn.cursor()
         cursor.execute(f"CREATE USER [{app_name}] FROM EXTERNAL PROVIDER")
@@ -653,10 +659,19 @@ async def update_member_role(
             (body.role, user_id, workspace_id),
         )
 
+        # Look up email for cache invalidation
+        cursor.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+        email_row = cursor.fetchone()
+
         log_audit(
             cursor, ctx, "update", "member", user_id,
             f"Changed role from {current_role} to {body.role} in workspace {workspace_id}",
         )
+
+    # Evict cached workspace context so new role takes effect immediately
+    if email_row:
+        from .main import invalidate_user_cache
+        invalidate_user_cache(email_row[0])
 
     return {"message": f"Role updated to {body.role}", "user_id": user_id}
 
@@ -694,6 +709,10 @@ async def remove_member(
             if other_chairs == 0:
                 raise HTTPException(400, "Cannot remove the only chair of a workspace")
 
+        # Look up email for cache invalidation
+        cursor.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+        email_row = cursor.fetchone()
+
         cursor.execute(
             "DELETE FROM workspace_members WHERE user_id = ? AND workspace_id = ?",
             (user_id, workspace_id),
@@ -703,6 +722,11 @@ async def remove_member(
             cursor, ctx, "delete", "member", user_id,
             f"Removed from workspace {workspace_id}",
         )
+
+    # Evict cached workspace context so removal takes effect immediately
+    if email_row:
+        from .main import invalidate_user_cache
+        invalidate_user_cache(email_row[0])
 
     return {"message": "Member removed", "user_id": user_id}
 

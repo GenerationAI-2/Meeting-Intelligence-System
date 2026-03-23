@@ -5,6 +5,11 @@ import sys
 import asyncio
 import contextlib
 import time as _time
+import uuid
+from contextvars import ContextVar
+
+# Request correlation — set per-request, accessible from any async code path
+request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 from .logging_config import configure_logging, get_logger
 from .mcp_server import mcp, set_mcp_user, set_mcp_workspace_context
@@ -16,6 +21,20 @@ from .database import EngineRegistry
 configure_logging()
 logger = get_logger(__name__)
 
+# Cache invalidation callback — set by run_http(), callable from admin.py
+# Signature: invalidate_user_cache(email: str) -> None
+_invalidate_user_cache_fn = None
+
+def invalidate_user_cache(email: str) -> None:
+    """Evict a user's workspace context from the in-memory cache.
+
+    Called from admin.py after role/membership changes so the new
+    permissions take effect immediately instead of waiting for cache TTL.
+    No-op if not running in HTTP mode or if no callback is registered.
+    """
+    if _invalidate_user_cache_fn:
+        _invalidate_user_cache_fn(email)
+
 
 async def run_stdio():
     """Run MCP server over stdio (for local/Claude Desktop)."""
@@ -26,7 +45,7 @@ def run_http():
     """Run MCP server over Streamable HTTP + REST API."""
     import uvicorn
     import os
-    from fastapi import FastAPI
+    from fastapi import Depends, FastAPI
     from fastapi.staticfiles import StaticFiles
     from starlette.responses import FileResponse, Response
     from starlette.middleware.cors import CORSMiddleware
@@ -37,6 +56,9 @@ def run_http():
     from .admin import admin_router
     from .config import get_settings
     from .database import validate_client_token, validate_token_from_control_db
+    from .dependencies import authenticate_and_store, resolve_workspace
+    from .permissions import check_permission
+    from .workspace_context import WorkspaceContext
 
     settings = get_settings()
 
@@ -50,6 +72,15 @@ def run_http():
     # Workspace context cache — avoids control DB hit on every MCP request
     # Keyed by email, same TTL as token cache
     _workspace_cache: dict[str, dict] = {}  # {email: {"ctx": WorkspaceContext, "expires": float}}
+
+    # Register cache invalidation callback for use by admin.py
+    global _invalidate_user_cache_fn
+    def _do_invalidate_user_cache(email: str) -> None:
+        email = email.strip().lower()
+        removed = _workspace_cache.pop(email, None)
+        if removed:
+            logger.info("Workspace cache evicted for %s (role/membership change)", email)
+    _invalidate_user_cache_fn = _do_invalidate_user_cache
 
     def _resolve_workspace_for_mcp(email: str) -> None:
         """Resolve workspace context for MCP requests and set on contextvar.
@@ -202,6 +233,16 @@ def run_http():
         if settings.azure_sql_server:
             _db_module.engine_registry = EngineRegistry(settings.azure_sql_server)
             logger.info("Engine registry initialized for server: %s", settings.azure_sql_server)
+
+            # Startup validation: verify control DB is reachable before accepting traffic
+            if settings.control_db_name:
+                try:
+                    from .database import get_control_db
+                    with get_control_db() as cursor:
+                        cursor.execute("SELECT 1")
+                    logger.info("Startup check: control DB '%s' is reachable", settings.control_db_name)
+                except Exception as e:
+                    logger.error("Startup check FAILED: control DB '%s' unreachable: %s", settings.control_db_name, e)
 
         async with mcp.session_manager.run():
             yield
@@ -389,6 +430,34 @@ def run_http():
 
     app.add_middleware(SecurityHeadersMiddleware)
 
+    # Request ID correlation — generates a unique ID per request, sets it on a
+    # contextvar for log access, and returns it in the X-Request-ID response header.
+    class RequestIdMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            rid = uuid.uuid4().hex[:12]
+            token = request_id_var.set(rid)
+
+            async def send_with_request_id(message):
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.append((b"x-request-id", rid.encode()))
+                    message["headers"] = headers
+                await send(message)
+
+            try:
+                await self.app(scope, receive, send_with_request_id)
+            finally:
+                request_id_var.reset(token)
+
+    app.add_middleware(RequestIdMiddleware)
+
     # CORS — mcp-session-id for Streamable HTTP session management
     app.add_middleware(
         CORSMiddleware,
@@ -453,7 +522,7 @@ def run_http():
         if not email:
             return Response("Unauthorized", status_code=401)
         set_mcp_user(email)
-        _resolve_workspace_for_mcp(email)
+        await asyncio.to_thread(_resolve_workspace_for_mcp, email)
 
         return await call_next(request)
 
@@ -469,6 +538,49 @@ def run_http():
     for route in api_app.routes:
         app.routes.append(route)
 
+    # Cache invalidation endpoints (org_admin only)
+    @app.post("/api/admin/cache/invalidate")
+    async def invalidate_all_caches(
+        user: str = Depends(authenticate_and_store),
+        ctx: WorkspaceContext = Depends(resolve_workspace),
+    ):
+        """Clear all in-memory token and workspace caches. Org Admin only."""
+        check_permission(ctx, "manage_workspace")
+        token_count = len(_token_cache)
+        workspace_count = len(_workspace_cache)
+        _token_cache.clear()
+        _workspace_cache.clear()
+        logger.info("Cache invalidated by %s: %d tokens, %d workspaces cleared",
+                     ctx.user_email, token_count, workspace_count)
+        return {
+            "message": "All caches invalidated",
+            "tokens_cleared": token_count,
+            "workspaces_cleared": workspace_count,
+        }
+
+    @app.delete("/api/admin/cache/tokens/{email}")
+    async def invalidate_user_cache(
+        email: str,
+        user: str = Depends(authenticate_and_store),
+        ctx: WorkspaceContext = Depends(resolve_workspace),
+    ):
+        """Invalidate cached tokens and workspace context for a specific user. Org Admin only."""
+        check_permission(ctx, "manage_workspace")
+        email = email.strip().lower()
+        # Remove from workspace cache
+        ws_removed = _workspace_cache.pop(email, None) is not None
+        # Remove matching token cache entries (keyed by hash, value contains email)
+        token_keys = [k for k, v in _token_cache.items() if v.get("email", "").lower() == email]
+        for k in token_keys:
+            del _token_cache[k]
+        logger.info("Cache invalidated for %s by %s: %d tokens, workspace=%s",
+                     email, ctx.user_email, len(token_keys), ws_removed)
+        return {
+            "message": f"Cache invalidated for {email}",
+            "tokens_cleared": len(token_keys),
+            "workspace_cleared": ws_removed,
+        }
+
     # Health probes (defined after route appends to ensure proper ordering)
     @app.get("/health")
     def health():
@@ -481,12 +593,17 @@ def run_http():
 
     @app.get("/health/ready")
     def health_ready():
-        """Readiness probe — verifies database is accessible."""
+        """Readiness probe — checks control DB in workspace mode, legacy DB otherwise."""
         from starlette.responses import JSONResponse
-        from .database import test_connection
+        from .database import get_control_db, test_connection
         try:
-            test_connection()
-            return {"status": "ready", "database": "connected"}
+            if settings.control_db_name and _db_module.engine_registry:
+                with get_control_db() as cursor:
+                    cursor.execute("SELECT 1")
+                return {"status": "ready", "database": "connected", "mode": "workspace"}
+            else:
+                test_connection()
+                return {"status": "ready", "database": "connected", "mode": "legacy"}
         except Exception as e:
             logger.warning("Readiness check failed: %s", e)
             return JSONResponse(
@@ -499,8 +616,33 @@ def run_http():
     if os.path.exists(static_dir):
         app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 
+        # Favicon — per-client branding via FAVICON_PATH env var
+        # If FAVICON_PATH is set and the file exists, serve it as the favicon.
+        # This allows each deployed instance to show its own client logo (used by
+        # browser tabs and claude.ai MCP connector thumbnails).
+        # Falls back to the default favicon.svg if FAVICON_PATH is unset or missing.
+        _custom_favicon = settings.favicon_path if settings.favicon_path and os.path.isfile(settings.favicon_path) else None
+        if _custom_favicon:
+            logger.info("Custom favicon configured: %s", _custom_favicon)
+
         @app.get("/favicon.svg")
-        async def serve_favicon():
+        async def serve_favicon_svg():
+            if _custom_favicon:
+                # Serve the custom PNG favicon even on the .svg path — browsers handle
+                # content-type correctly regardless of URL extension.
+                return FileResponse(_custom_favicon, media_type="image/png")
+            return FileResponse(os.path.join(static_dir, "favicon.svg"), media_type="image/svg+xml")
+
+        @app.get("/favicon.ico")
+        async def serve_favicon_ico():
+            if _custom_favicon:
+                return FileResponse(_custom_favicon, media_type="image/png")
+            return FileResponse(os.path.join(static_dir, "favicon.svg"), media_type="image/svg+xml")
+
+        @app.get("/favicon.png")
+        async def serve_favicon_png():
+            if _custom_favicon:
+                return FileResponse(_custom_favicon, media_type="image/png")
             return FileResponse(os.path.join(static_dir, "favicon.svg"), media_type="image/svg+xml")
 
         @app.get("/")

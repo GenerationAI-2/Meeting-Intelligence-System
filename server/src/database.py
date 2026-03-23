@@ -11,6 +11,7 @@ Pool configuration:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
 import struct
@@ -64,13 +65,16 @@ MAX_DELAY = 10.0        # seconds
 # Module-level engine (lazy init)
 _engine = None
 
+# Shared Azure credential — reused across all connection factories
+# DefaultAzureCredential handles token caching and refresh internally
+_credential = DefaultAzureCredential()
+
 
 def _create_raw_connection() -> pyodbc.Connection:
     """Create a raw pyodbc connection with Azure AD token auth."""
     settings = get_settings()
 
-    credential = DefaultAzureCredential()
-    token_bytes = credential.get_token(
+    token_bytes = _credential.get_token(
         "https://database.windows.net/.default"
     ).token.encode("UTF-16-LE")
     token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
@@ -200,6 +204,22 @@ def call_with_retry(engine: Engine, func, *args,
     raise last_exception  # Safety net
 
 
+async def async_call_with_retry(engine: Engine, func, *args,
+                                max_retries: int = MAX_RETRIES,
+                                base_delay: float = BASE_DELAY,
+                                max_delay: float = MAX_DELAY, **kwargs):
+    """Async wrapper around call_with_retry — runs it in a thread pool.
+
+    Prevents time.sleep() in the retry logic from blocking the asyncio
+    event loop. Same semantics as call_with_retry; use from async contexts.
+    """
+    return await asyncio.to_thread(
+        call_with_retry, engine, func, *args,
+        max_retries=max_retries, base_delay=base_delay,
+        max_delay=max_delay, **kwargs
+    )
+
+
 # ============================================================================
 # ENGINE REGISTRY — Multi-database connection management
 # ============================================================================
@@ -228,8 +248,7 @@ class EngineRegistry:
         sql_server = self._sql_server
 
         def _connection_factory():
-            credential = DefaultAzureCredential()
-            token_bytes = credential.get_token(
+            token_bytes = _credential.get_token(
                 "https://database.windows.net/.default"
             ).token.encode("UTF-16-LE")
             token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)

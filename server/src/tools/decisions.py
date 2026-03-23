@@ -5,7 +5,7 @@ Caller manages connection lifecycle and retry logic via call_with_retry().
 """
 
 import pyodbc
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from ..workspace_context import WorkspaceContext
 from ..permissions import check_permission
@@ -162,7 +162,7 @@ def create_decision(
     if not decision_text or len(decision_text.strip()) == 0:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "decision_text is required"}
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Validate meeting exists
     cursor.execute("SELECT MeetingId, Title FROM Meeting WHERE MeetingId = ?", (meeting_id,))

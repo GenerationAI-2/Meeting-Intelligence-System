@@ -5,7 +5,7 @@ Caller manages connection lifecycle and retry logic via call_with_retry().
 """
 
 import pyodbc
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from ..workspace_context import WorkspaceContext
 from ..permissions import check_permission
@@ -218,7 +218,7 @@ def create_meeting(
     except ValueError:
         return {"error": True, "code": "VALIDATION_ERROR", "message": "Invalid date format. Use ISO format."}
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     cursor.execute("""
         INSERT INTO Meeting (Title, MeetingDate, RawTranscript, Summary,
@@ -294,7 +294,7 @@ def update_meeting(
         return {"error": True, "code": "VALIDATION_ERROR", "message": "No fields to update"}
 
     updates.append("UpdatedAt = ?")
-    params.append(datetime.utcnow())
+    params.append(datetime.now(timezone.utc))
     updates.append("UpdatedBy = ?")
     params.append(ctx.user_email)
 

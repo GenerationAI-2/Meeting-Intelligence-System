@@ -5,7 +5,7 @@ Caller manages connection lifecycle and retry logic via call_with_retry().
 """
 
 import pyodbc
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 from ..workspace_context import WorkspaceContext
 from ..permissions import check_permission
@@ -204,7 +204,7 @@ def create_action(
         except ValueError:
             return {"error": True, "code": "VALIDATION_ERROR", "message": "Invalid due_date format. Use ISO format."}
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Validate meeting_id if provided
     if meeting_id:
@@ -286,7 +286,7 @@ def update_action(
         return {"error": True, "code": "VALIDATION_ERROR", "message": "No fields to update"}
 
     updates.append("UpdatedAt = ?")
-    params.append(datetime.utcnow())
+    params.append(datetime.now(timezone.utc))
     updates.append("UpdatedBy = ?")
     params.append(ctx.user_email)
 
@@ -314,7 +314,7 @@ def _update_status(cursor, ctx, action_id, new_status, notes=None):
 
     check_permission(ctx, "update_status")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if notes is not None:
         cursor.execute("""
             UPDATE Action

@@ -9,8 +9,8 @@ from .schemas import StatusUpdate
 
 from . import database as _db_module
 from .database import (
-    _get_engine, call_with_retry, validate_client_token, validate_token_from_control_db,
-    create_user_token, list_user_tokens, revoke_user_token,
+    _get_engine, async_call_with_retry, validate_client_token,
+    validate_token_from_control_db, create_user_token, list_user_tokens, revoke_user_token,
 )
 from .dependencies import authenticate_and_store, resolve_workspace
 from .workspace_context import WorkspaceContext
@@ -293,7 +293,7 @@ async def list_meetings_endpoint(
     kwargs = {"limit": limit}
     if days_back is not None:
         kwargs["days_back"] = days_back
-    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.list_meetings, ctx, **kwargs)
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), meetings.list_meetings, ctx, **kwargs)
     if result.get("error"):
         logger.error("List meetings failed", extra={"code": result.get("code"), "message": result.get("message")})
         raise HTTPException(status_code=400, detail=result["message"])
@@ -309,7 +309,7 @@ async def search_meetings_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Search meetings by keyword."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.search_meetings, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), meetings.search_meetings, ctx,
                              query=query, limit=limit)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
@@ -323,7 +323,7 @@ async def get_meeting_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Get meeting details including linked actions and decisions."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.get_meeting_detail, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), meetings.get_meeting_detail, ctx,
                              meeting_id=meeting_id)
     if result.get("error"):
         if result["code"] == "NOT_FOUND":
@@ -343,7 +343,7 @@ async def list_actions_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """List actions with filters."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), actions.list_actions, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), actions.list_actions, ctx,
                              status=status, owner=owner,
                              meeting_id=meeting_id, limit=limit)
     if result.get("error"):
@@ -357,7 +357,7 @@ async def list_action_owners_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Get distinct action owners for filter dropdown."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), actions.get_distinct_owners, ctx)
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), actions.get_distinct_owners, ctx)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
@@ -370,7 +370,7 @@ async def get_action_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Get action details."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), actions.get_action, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), actions.get_action, ctx,
                              action_id=action_id)
     if result.get("error"):
         if result["code"] == "NOT_FOUND":
@@ -390,11 +390,11 @@ async def update_action_status_endpoint(
     eng = _get_engine_for_ctx(ctx)
 
     if update.status == "Complete":
-        result = call_with_retry(eng, actions.complete_action, ctx, action_id=action_id, notes=update.notes)
+        result = await async_call_with_retry(eng, actions.complete_action, ctx, action_id=action_id, notes=update.notes)
     elif update.status == "Parked":
-        result = call_with_retry(eng, actions.park_action, ctx, action_id=action_id, notes=update.notes)
+        result = await async_call_with_retry(eng, actions.park_action, ctx, action_id=action_id, notes=update.notes)
     elif update.status == "Open":
-        result = call_with_retry(eng, actions.reopen_action, ctx, action_id=action_id, notes=update.notes)
+        result = await async_call_with_retry(eng, actions.reopen_action, ctx, action_id=action_id, notes=update.notes)
     else:
         raise HTTPException(
             status_code=400,
@@ -417,7 +417,7 @@ async def list_decisions_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """List decisions."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.list_decisions, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), decisions.list_decisions, ctx,
                              meeting_id=meeting_id, limit=limit)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["message"])
@@ -431,7 +431,7 @@ async def get_decision_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Get decision details."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.get_decision, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), decisions.get_decision, ctx,
                              decision_id=decision_id)
     if result.get("error"):
         if result.get("code") == "NOT_FOUND":
@@ -447,7 +447,7 @@ async def create_action_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Create a new action item."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), actions.create_action, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), actions.create_action, ctx,
                              action_text=body.action_text, owner=body.owner,
                              due_date=body.due_date, meeting_id=body.meeting_id,
                              notes=body.notes)
@@ -470,7 +470,7 @@ async def update_action_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Update an action's text, owner, due date, or notes."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), actions.update_action, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), actions.update_action, ctx,
                              action_id=action_id,
                              action_text=body.action_text, owner=body.owner,
                              due_date=body.due_date, notes=body.notes)
@@ -492,7 +492,7 @@ async def create_decision_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Create a new decision linked to a meeting."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.create_decision, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), decisions.create_decision, ctx,
                              meeting_id=body.meeting_id,
                              decision_text=body.decision_text,
                              context=body.context)
@@ -515,7 +515,7 @@ async def update_decision_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Update a decision's text or context."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.update_decision, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), decisions.update_decision, ctx,
                              decision_id=decision_id,
                              decision_text=body.decision_text,
                              context=body.context)
@@ -538,7 +538,7 @@ async def update_meeting_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Update a meeting's title, summary, attendees, or tags."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.update_meeting, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), meetings.update_meeting, ctx,
                              meeting_id=meeting_id,
                              title=body.title, summary=body.summary,
                              attendees=body.attendees, tags=body.tags)
@@ -560,7 +560,7 @@ async def delete_meeting_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Delete a meeting and its associated decisions and actions."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), meetings.delete_meeting, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), meetings.delete_meeting, ctx,
                              meeting_id=meeting_id)
     if result.get("error"):
         if result.get("code") == "NOT_FOUND":
@@ -577,7 +577,7 @@ async def delete_action_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Delete an action."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), actions.delete_action, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), actions.delete_action, ctx,
                              action_id=action_id)
     if result.get("error"):
         if result.get("code") == "NOT_FOUND":
@@ -594,7 +594,7 @@ async def delete_decision_endpoint(
     ctx: WorkspaceContext = Depends(resolve_workspace),
 ):
     """Delete a decision."""
-    result = call_with_retry(_get_engine_for_ctx(ctx), decisions.delete_decision, ctx,
+    result = await async_call_with_retry(_get_engine_for_ctx(ctx), decisions.delete_decision, ctx,
                              decision_id=decision_id)
     if result.get("error"):
         if result.get("code") == "NOT_FOUND":
