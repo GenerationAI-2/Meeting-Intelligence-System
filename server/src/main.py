@@ -74,8 +74,13 @@ def run_http():
         _oauth_provider = MIOAuthProvider(
             jwt_secret=settings.jwt_secret,
             oauth_base_url=settings.oauth_base_url,
+            azure_tenant_id=settings.azure_oauth_tenant_id,
+            azure_client_id=settings.azure_oauth_client_id,
         )
-        logger.info("OAuth 2.1 provider enabled (base URL: %s)", settings.oauth_base_url)
+        if settings.azure_oauth_tenant_id and settings.azure_oauth_client_id:
+            logger.info("OAuth 2.1 provider enabled with Azure AD proxy (base URL: %s)", settings.oauth_base_url)
+        else:
+            logger.info("OAuth 2.1 provider enabled with PAT consent (base URL: %s)", settings.oauth_base_url)
     # ──────────────────────────────────────────────────────────────────
 
     # In-memory token cache — avoids DB hit on every MCP request
@@ -729,7 +734,128 @@ def run_http():
 </body>
 </html>""")
 
-        logger.info("OAuth 2.1 routes mounted (DCR, PKCE, consent page)")
+        # ── Azure AD Callback (Phase 3 — replaces PAT consent) ────────
+        if settings.azure_oauth_tenant_id and settings.azure_oauth_client_id and settings.azure_oauth_client_secret:
+            import httpx as _httpx
+
+            @app.get("/oauth/callback")
+            async def oauth_azure_callback(code: str = "", state: str = "", error: str = "", error_description: str = ""):
+                """Handle Azure AD authorization code callback.
+
+                Azure AD redirects here after user authenticates. We exchange
+                the code for tokens, extract the email claim, and complete
+                the MI OAuth flow (issuing our own JWT to the MCP client).
+                """
+                if error:
+                    logger.warning("Azure AD callback error: %s — %s", error, error_description)
+                    return HTMLResponse(
+                        f"<html><body><h2>Authentication failed</h2>"
+                        f"<p>{error_description or error}</p>"
+                        f"<p>Please try connecting again from your AI client.</p></body></html>",
+                        status_code=400,
+                    )
+
+                if not code or not state:
+                    return HTMLResponse(
+                        "<html><body><h2>Missing authorization code or state.</h2></body></html>",
+                        status_code=400,
+                    )
+
+                # Verify the session exists
+                pending = _oauth_provider.get_pending_auth(state)
+                if not pending:
+                    return HTMLResponse(
+                        "<html><body><h2>Invalid or expired authorization session.</h2>"
+                        "<p>Please try connecting again from your AI client.</p></body></html>",
+                        status_code=400,
+                    )
+
+                # Exchange Azure AD auth code for tokens
+                token_url = (
+                    f"https://login.microsoftonline.com/{settings.azure_oauth_tenant_id}"
+                    f"/oauth2/v2.0/token"
+                )
+                try:
+                    async with _httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(token_url, data={
+                            "grant_type": "authorization_code",
+                            "client_id": settings.azure_oauth_client_id,
+                            "client_secret": settings.azure_oauth_client_secret,
+                            "code": code,
+                            "redirect_uri": f"{settings.oauth_base_url}/oauth/callback",
+                            "scope": "openid profile email",
+                        })
+
+                    if resp.status_code != 200:
+                        logger.error("Azure AD token exchange failed: %s %s", resp.status_code, resp.text[:500])
+                        return HTMLResponse(
+                            "<html><body><h2>Authentication failed</h2>"
+                            "<p>Could not exchange authorization code. Please try again.</p></body></html>",
+                            status_code=502,
+                        )
+
+                    token_data = resp.json()
+                except Exception as e:
+                    logger.error("Azure AD token exchange error: %s", e)
+                    return HTMLResponse(
+                        "<html><body><h2>Authentication failed</h2>"
+                        "<p>Could not reach Azure AD. Please try again.</p></body></html>",
+                        status_code=502,
+                    )
+
+                # Extract email from id_token (JWT — trusted source, no sig verification needed)
+                id_token = token_data.get("id_token")
+                if not id_token:
+                    logger.error("Azure AD response missing id_token")
+                    return HTMLResponse(
+                        "<html><body><h2>Authentication failed</h2>"
+                        "<p>Azure AD did not return an identity token.</p></body></html>",
+                        status_code=502,
+                    )
+
+                try:
+                    # Decode without verification — token came directly from Azure AD over TLS
+                    claims = pyjwt.decode(id_token, options={
+                        "verify_signature": False,
+                        "verify_aud": False,
+                        "verify_iss": False,
+                    })
+                except pyjwt.InvalidTokenError as e:
+                    logger.error("Azure AD id_token decode failed: %s", e)
+                    return HTMLResponse(
+                        "<html><body><h2>Authentication failed</h2>"
+                        "<p>Could not decode identity token.</p></body></html>",
+                        status_code=502,
+                    )
+
+                # Extract email — prefer 'email' claim (clean for B2B guests),
+                # fall back to 'preferred_username' (UPN format)
+                user_email = claims.get("email") or claims.get("preferred_username") or ""
+                if not user_email:
+                    logger.error("Azure AD id_token has no email or preferred_username claim: %s", list(claims.keys()))
+                    return HTMLResponse(
+                        "<html><body><h2>Authentication failed</h2>"
+                        "<p>Could not determine your email address from Azure AD.</p></body></html>",
+                        status_code=400,
+                    )
+
+                # Complete the MI OAuth flow — creates auth code and returns redirect URI
+                try:
+                    redirect_uri = _oauth_provider.complete_authorization(state, user_email)
+                except ValueError as e:
+                    return HTMLResponse(
+                        f"<html><body><h2>Authorization failed: {e}</h2></body></html>",
+                        status_code=400,
+                    )
+
+                logger.info("Azure AD OAuth completed: user=%s, session=%s", user_email.lower(), state[:8])
+
+                # Redirect to MCP client (Claude/ChatGPT) with the MI auth code
+                from starlette.responses import RedirectResponse
+                return RedirectResponse(url=redirect_uri, status_code=302)
+
+        logger.info("OAuth 2.1 routes mounted (DCR, PKCE, %s)",
+                     "Azure AD proxy" if _oauth_provider._azure_ad_enabled else "PAT consent")
     # ──────────────────────────────────────────────────────────────────
 
     # Mount Admin API (workspace CRUD + member management)

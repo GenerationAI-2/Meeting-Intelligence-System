@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     jwt_secret: str = ""  # HS256 signing key for OAuth JWTs. Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
     oauth_base_url: str = ""  # Public URL of this MI instance (e.g., https://fero.claritylayer.co.nz). Required for OAuth.
 
+    # Azure AD OAuth proxy (Phase 3 — replaces PAT consent with Azure AD login)
+    # When all three are set, /authorize redirects to Azure AD instead of the PAT consent page.
+    # Uses the existing per-client App Registration (same as SPA auth).
+    azure_oauth_tenant_id: str = ""   # MyAdvisor tenant: 12e7fcaa-f776-4545-aacf-e89be7737cf3
+    azure_oauth_client_id: str = ""   # App Registration client ID (e.g., d3c1c727... for genai)
+    azure_oauth_client_secret: str = ""  # App Registration client secret (create in Azure Portal)
+
     # Branding
     favicon_path: str = ""  # Absolute path to per-client favicon (PNG). Empty = default favicon.svg.
 

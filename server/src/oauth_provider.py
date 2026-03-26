@@ -3,10 +3,16 @@
 Implements the MCP SDK's OAuthAuthorizationServerProvider Protocol to enable
 per-user authentication on Claude Teams and ChatGPT org connectors (B17 fix).
 
-Architecture: MI acts as its own OAuth Authorization Server. The consent page
-asks users for their existing MI PAT token to prove identity. The JWT access
-token's `sub` claim is set to the user's email (not the OAuth client_id),
-which feeds into the existing RBAC pipeline unchanged.
+Architecture: MI acts as an OAuth Authorization Server and proxies identity
+to Azure AD. When Azure AD OAuth proxy is configured, /authorize redirects
+to Azure AD login instead of the PAT consent page. Azure AD authenticates
+the user, and the /oauth/callback endpoint exchanges the code for tokens,
+extracts the user's email, and completes the MI OAuth flow. The JWT access
+token's `sub` claim is set to the user's email (from Azure AD), which feeds
+into the existing RBAC pipeline unchanged.
+
+When Azure AD proxy is NOT configured, falls back to PAT consent page
+(original Phase 1 behavior).
 
 SDK routes (/.well-known/*, /authorize, /token, /register, /revoke) are
 mounted directly on the FastAPI app via create_auth_routes(). The /mcp
@@ -25,6 +31,7 @@ import json
 import secrets
 import time
 from typing import Any
+from urllib.parse import urlencode
 
 import jwt
 from pydantic import AnyHttpUrl, AnyUrl
@@ -299,9 +306,20 @@ class MIOAuthProvider(OAuthAuthorizationServerProvider[MIAuthorizationCode, MIRe
     Falls back to in-memory-only if control DB is unavailable.
     """
 
-    def __init__(self, jwt_secret: str, oauth_base_url: str):
+    def __init__(
+        self,
+        jwt_secret: str,
+        oauth_base_url: str,
+        azure_tenant_id: str = "",
+        azure_client_id: str = "",
+    ):
         self._jwt_secret = jwt_secret
         self._oauth_base_url = oauth_base_url.rstrip("/")
+
+        # Azure AD proxy config (Phase 3)
+        self._azure_tenant_id = azure_tenant_id
+        self._azure_client_id = azure_client_id
+        self._azure_ad_enabled = bool(azure_tenant_id and azure_client_id)
 
         # In-memory caches (read-through from DB)
         self._clients: dict[str, OAuthClientInformationFull] = {}
@@ -366,11 +384,13 @@ class MIOAuthProvider(OAuthAuthorizationServerProvider[MIAuthorizationCode, MIRe
     # ── Authorization ────────────────────────────────────────────────
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
-        """Start authorization flow — redirect to consent page.
+        """Start authorization flow.
 
-        We save the authorization parameters in a pending session, then
-        return a redirect URL to our consent page. The consent page will
-        ask the user for their MI PAT to prove identity.
+        When Azure AD proxy is configured: redirects to Azure AD login.
+        Otherwise: redirects to PAT consent page (original behavior).
+
+        We save the authorization parameters in a pending session keyed by
+        session_id, which doubles as the `state` parameter for Azure AD.
         """
         session_id = secrets.token_urlsafe(32)
         self._pending_auth[session_id] = {
@@ -385,6 +405,25 @@ class MIOAuthProvider(OAuthAuthorizationServerProvider[MIAuthorizationCode, MIRe
         for k in expired:
             del self._pending_auth[k]
 
+        if self._azure_ad_enabled:
+            # Redirect to Azure AD login — user authenticates there, then
+            # Azure AD redirects back to /oauth/callback with code + state
+            azure_params = urlencode({
+                "client_id": self._azure_client_id,
+                "response_type": "code",
+                "redirect_uri": f"{self._oauth_base_url}/oauth/callback",
+                "scope": "openid profile email",
+                "state": session_id,
+                "response_mode": "query",
+            })
+            azure_url = (
+                f"https://login.microsoftonline.com/{self._azure_tenant_id}"
+                f"/oauth2/v2.0/authorize?{azure_params}"
+            )
+            logger.info("Azure AD proxy: redirecting to Azure AD for session %s", session_id[:8])
+            return azure_url
+
+        # Fallback: PAT consent page
         return f"{self._oauth_base_url}/oauth/consent?session={session_id}"
 
     def complete_authorization(self, session_id: str, user_email: str) -> str:
