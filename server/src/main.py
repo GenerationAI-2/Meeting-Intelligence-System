@@ -65,6 +65,7 @@ def run_http():
     # ── OAuth 2.1 Provider (B17 — per-user MCP auth) ──────────────────
     import jwt as pyjwt
     from pydantic import AnyHttpUrl
+    from starlette.requests import Request
     from starlette.responses import HTMLResponse
 
     _oauth_provider = None
@@ -639,7 +640,7 @@ def run_http():
 </html>""")
 
         @app.post("/oauth/consent")
-        async def oauth_consent_submit(request):
+        async def oauth_consent_submit(request: Request):
             """Process consent form — validate PAT, issue auth code, redirect."""
             from starlette.responses import RedirectResponse as StarletteRedirect
             form = await request.form()
