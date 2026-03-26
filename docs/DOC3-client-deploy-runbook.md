@@ -84,15 +84,29 @@ The script runs 6 phases:
 
 Three things the script cannot automate:
 
-### 3a. API Consent
+### 3a. Admin Consent (MANDATORY for client apps)
 
-For the Generation AI subscription, user consent has been sufficient — each user approves the app permissions on first login. For other client tenants, this may require admin consent depending on their Azure AD policies:
+**All client apps require admin consent.** Client users are B2B guests in the MyAdvisor tenant — guests cannot self-consent under the tenant's `microsoft-user-default-recommended` consent policy. Without admin consent, guest users hit a misleading "does not exist in tenant" error at Azure AD login.
+
+A Global Administrator (Mark) must grant consent:
 
 ```
-Azure Portal → App Registrations → <Client ID> → API Permissions → Grant admin consent
+Azure Portal → Enterprise Applications → mi-<client>-prod → Permissions → Grant admin consent for MyAdvisor
 ```
 
-Check the client's tenant consent settings. If user consent is disabled tenant-wide, a Global Admin will need to grant consent or the web UI login will fail with a permissions error.
+Or via direct URL (send to Mark):
+```
+https://login.microsoftonline.com/12e7fcaa-f776-4545-aacf-e89be7737cf3/adminconsent?client_id=<CLIENT_ID>
+```
+
+**Verify consent was granted:**
+```bash
+SP_ID=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals?\$filter=appId eq '<CLIENT_ID>'" --query "value[0].id" -o tsv)
+az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/${SP_ID}/oauth2PermissionGrants" -o json
+# Should return at least one grant with consentType: "AllPrincipals"
+```
+
+**Why this is mandatory:** All client deployments use the MyAdvisor tenant (`12e7fcaa-...`). Client users (e.g., `@fero.co.nz`, `@victoryknives.co.nz`) are B2B guests. Guests can authenticate (B2B invitation handles that) but cannot consent to app permissions. Admin consent bridges this gap.
 
 ### 3b. Commit the Parameter File
 

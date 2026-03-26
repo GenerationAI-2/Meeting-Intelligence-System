@@ -48,7 +48,7 @@ def _get_user_memberships(
         """
         SELECT u.is_org_admin, u.default_workspace_id
         FROM users u
-        WHERE u.email = ?
+        WHERE LOWER(u.email) = LOWER(?)
         """,
         (email,)
     )
@@ -65,7 +65,7 @@ def _get_user_memberships(
                w.is_default, w.is_archived
         FROM workspace_members wm
         JOIN workspaces w ON w.id = wm.workspace_id
-        WHERE wm.user_id = (SELECT id FROM users WHERE email = ?)
+        WHERE wm.user_id = (SELECT id FROM users WHERE LOWER(email) = LOWER(?))
         ORDER BY w.is_archived, w.is_default DESC, w.name
         """,
         (email,)

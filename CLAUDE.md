@@ -39,8 +39,10 @@ npm run dev  # Run on :5173
 
 **Removed env vars (27 Feb migration):**
 - `MCP_AUTH_TOKENS` — Removed. All envs now use DB-backed tokens (control DB `tokens` table or workspace DB `ClientToken` table).
-- `JWT_SECRET` / `JWT_SECRET_PREVIOUS` — Removed with OAuth 2.1.
-- `OAUTH_BASE_URL` — Removed with OAuth 2.1.
+
+**Re-added env vars (26 Mar — B17 OAuth):**
+- `JWT_SECRET` — Required for OAuth JWT signing (genai only)
+- `OAUTH_BASE_URL` — OAuth issuer URL, e.g. `https://mi-genai.greenbush-...` (genai only)
 
 ---
 
@@ -144,6 +146,10 @@ web/src/
 | Claude.ai custom connector has no custom headers field | Claude.ai's "Add custom connector" dialog only has a URL field + OAuth fields — no way to set Bearer/X-API-Key headers. Fix: re-added query param token auth (`/mcp?token=<token>`) in main.py auth middleware. | 2026-02-27 |
 | Control DB needs manual setup on existing environments transitioning to workspace mode | `deploy-bicep.sh` creates the control DB but doesn't apply schema, seed data, or create MI user. Deploying workspace-mode code to an existing env without these steps → 503 (`Login failed` then `Invalid object name 'tokens'`). Fix: manually create MI user in control DB (db_datareader + db_datawriter), apply `control_schema.sql`, seed workspace/users/memberships/tokens, grant MI `dbmanager` on master for workspace creation. | 2026-02-27 |
 | pyodbc Azure AD token struct packing | Wrong: `struct.pack('=IH', len(token_bytes) + 2, 1)`. Correct: `struct.pack('<I', len(token_bytes)) + token_bytes`. Symptom: 18456 login failed for token-identified principal. | 2026-02-27 |
+| OAuth auto-registered client missing `scope` field | Auto-registered `_PermissiveClient` had no `scope` set. SDK validated requested scope `mcp` against client's registered scopes — rejected with `invalid_scope` redirect. Fix: set `scope="mcp"` on auto-registered clients. | 2026-03-26 |
+| OAuth auto-registered client `token_endpoint_auth_method=None` | SDK defaults `token_endpoint_auth_method` to `None`. Authenticator's switch/case treats `None` as "unsupported auth method" → 401 on `/token`. Fix: explicitly set `token_endpoint_auth_method="none"` (string). | 2026-03-26 |
+| `OAuthClientInformationFull.redirect_uris` min_length=1 | SDK Pydantic model requires at least 1 redirect URI. Auto-registered client with `redirect_uris=[]` fails validation. Fix: use placeholder URI + `_PermissiveClient` subclass that overrides `validate_redirect_uri` to accept any URI. | 2026-03-26 |
+| GenAI SPA built with wrong Azure AD app registration | CLAUDE.md documented `VITE_SPA_CLIENT_ID=b5a8a565` ("meeting-intelligence-api") but genai server validates against `d3c1c727` ("Meeting Intelligence - GenAI"). Token audience mismatch → 401 on all API calls. Fix: rebuild SPA with correct client ID. **GenAI uses different app registration than other envs.** | 2026-03-26 |
 
 ---
 
@@ -201,7 +207,9 @@ web/src/
 
 **Known issues:** See `docs/backlog.md` for full list. Key items: Marshall frozen on pre-P7 code (`f3758d1`), no CI/CD.
 
-**Removed (27 Feb migration):** OAuth 2.1 (DCR, PKCE, refresh tokens, revocation endpoint, protected resource metadata, resource indicators), SSE transport (`/sse`), path-based token auth (`/mcp/{token}`), legacy `MCP_AUTH_TOKENS` env var, JWT dual-key rotation.
+**Removed (27 Feb migration):** SSE transport (`/sse`), path-based token auth (`/mcp/{token}`), legacy `MCP_AUTH_TOKENS` env var, JWT dual-key rotation.
+
+**Re-added (26 Mar):** OAuth 2.1 (B17 fix) — DCR, PKCE, refresh tokens, revocation, protected resource metadata. Deployed to genai only. Uses MCP SDK's `OAuthAuthorizationServerProvider`. PAT-based consent flow. In-memory client/token storage (single-replica). Env vars: `JWT_SECRET`, `OAUTH_BASE_URL`.
 
 ---
 
@@ -348,7 +356,9 @@ If push fails (e.g. remote has diverged), do NOT force push. Pull with rebase (`
 **Deployment notes:**
 - Always use a unique image tag: `./infra/deploy-bicep.sh marshall $(date +%Y%m%d%H%M%S)`
 - `deploy.sh` is deprecated (archived). All environments use `infra/deploy-bicep.sh`.
-- **ACR builds must include VITE build args:** `--build-arg VITE_SPA_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_API_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_AZURE_TENANT_ID=12e7fcaa-f776-4545-aacf-e89be7737cf3 --build-arg VITE_API_URL=/api`
+- **ACR builds must include VITE build args.** Client ID differs per environment:
+  - **GenAI:** `--build-arg VITE_SPA_CLIENT_ID=d3c1c727-15e6-4089-ae01-a54f524e5f3e --build-arg VITE_API_CLIENT_ID=d3c1c727-15e6-4089-ae01-a54f524e5f3e --build-arg VITE_AZURE_TENANT_ID=12e7fcaa-f776-4545-aacf-e89be7737cf3 --build-arg VITE_API_URL=/api`
+  - **All other envs:** `--build-arg VITE_SPA_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_API_CLIENT_ID=b5a8a565-e18e-42a6-a57b-ade6d17aa197 --build-arg VITE_AZURE_TENANT_ID=12e7fcaa-f776-4545-aacf-e89be7737cf3 --build-arg VITE_API_URL=/api`
 - After deploy, reconnect MCP in Claude to refresh tool list
 - Check revision status: `az containerapp revision list --name [app] --resource-group [rg] -o table`
 

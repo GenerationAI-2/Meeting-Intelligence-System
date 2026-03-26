@@ -549,6 +549,7 @@ def run_http():
                 if payload.get("type") == "access":
                     email = payload.get("sub")
                     if email:
+                        email = email.lower()  # Normalize — DB lookup is case-sensitive
                         logger.debug("OAuth JWT auth: %s (client: %s)", email, payload.get("client_id"))
             except pyjwt.InvalidTokenError:
                 pass  # Not a valid JWT — fall through to PAT validation
