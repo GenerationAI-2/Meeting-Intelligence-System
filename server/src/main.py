@@ -62,6 +62,21 @@ def run_http():
 
     settings = get_settings()
 
+    # ── OAuth 2.1 Provider (B17 — per-user MCP auth) ──────────────────
+    import jwt as pyjwt
+    from pydantic import AnyHttpUrl
+    from starlette.responses import HTMLResponse
+
+    _oauth_provider = None
+    if settings.jwt_secret and settings.oauth_base_url:
+        from .oauth_provider import MIOAuthProvider
+        _oauth_provider = MIOAuthProvider(
+            jwt_secret=settings.jwt_secret,
+            oauth_base_url=settings.oauth_base_url,
+        )
+        logger.info("OAuth 2.1 provider enabled (base URL: %s)", settings.oauth_base_url)
+    # ──────────────────────────────────────────────────────────────────
+
     # In-memory token cache — avoids DB hit on every MCP request
     # Trade-off: revoked tokens may still work for up to TOKEN_CACHE_TTL seconds
     _token_cache: dict[str, dict] = {}  # {hash: {"email": str, "expires_cache": float}}
@@ -518,7 +533,26 @@ def run_http():
         if not token:
             return Response("Unauthorized", status_code=401)
 
-        email = await validate_mcp_token(token)
+        email = None
+
+        # OAuth JWT validation (B17) — try first if provider is configured
+        # JWTs contain dots; PATs are base64url without dots.
+        if _oauth_provider and "." in token:
+            try:
+                payload = pyjwt.decode(
+                    token, settings.jwt_secret, algorithms=["HS256"]
+                )
+                if payload.get("type") == "access":
+                    email = payload.get("sub")
+                    if email:
+                        logger.debug("OAuth JWT auth: %s (client: %s)", email, payload.get("client_id"))
+            except pyjwt.InvalidTokenError:
+                pass  # Not a valid JWT — fall through to PAT validation
+
+        # PAT validation (existing path)
+        if not email:
+            email = await validate_mcp_token(token)
+
         if not email:
             return Response("Unauthorized", status_code=401)
         set_mcp_user(email)
@@ -529,6 +563,137 @@ def run_http():
     # Mount MCP transport (Streamable HTTP only — /mcp endpoint)
     for route in streamable_http_app.routes:
         app.routes.append(route)
+
+    # ── OAuth 2.1 Routes (B17) ────────────────────────────────────────
+    if _oauth_provider:
+        from mcp.server.auth.routes import create_auth_routes, create_protected_resource_routes
+        from mcp.server.auth.settings import (
+            ClientRegistrationOptions,
+            RevocationOptions,
+        )
+
+        # SDK creates Starlette routes for /.well-known/*, /authorize, /token, /register, /revoke
+        oauth_routes = create_auth_routes(
+            provider=_oauth_provider,
+            issuer_url=AnyHttpUrl(settings.oauth_base_url),
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=["mcp"],
+                default_scopes=["mcp"],
+            ),
+            revocation_options=RevocationOptions(enabled=True),
+        )
+        # Protected Resource Metadata (RFC 9728) — tells clients where our AS is
+        prm_routes = create_protected_resource_routes(
+            resource_url=AnyHttpUrl(settings.oauth_base_url),
+            authorization_servers=[AnyHttpUrl(settings.oauth_base_url)],
+            scopes_supported=["mcp"],
+        )
+
+        for route in [*oauth_routes, *prm_routes]:
+            app.routes.insert(0, route)  # Insert before SPA catch-all
+
+        # ── Consent Page (PAT-based identity proof) ───────────────────
+        @app.get("/oauth/consent")
+        async def oauth_consent_page(session: str = ""):
+            """Render consent page where user pastes their MI PAT."""
+            if not _oauth_provider:
+                return Response("OAuth not configured", status_code=503)
+            pending = _oauth_provider.get_pending_auth(session)
+            if not pending:
+                return HTMLResponse(
+                    "<html><body><h2>Invalid or expired authorization session.</h2>"
+                    "<p>Please try connecting again from your AI client.</p></body></html>",
+                    status_code=400,
+                )
+            client = pending["client"]
+            return HTMLResponse(f"""<!DOCTYPE html>
+<html>
+<head><title>Authorize MCP Connection</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; }}
+  h2 {{ color: #1a1a1a; }}
+  .client-name {{ background: #f0f0f0; padding: 4px 8px; border-radius: 4px; font-weight: 600; }}
+  input[type=password] {{ width: 100%; padding: 10px; margin: 12px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }}
+  button {{ background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }}
+  button:hover {{ background: #1d4ed8; }}
+  .info {{ color: #666; font-size: 13px; margin-top: 16px; }}
+</style>
+</head>
+<body>
+  <h2>Authorize MCP Connection</h2>
+  <p><span class="client-name">{client.client_name or client.client_id}</span> wants to connect to Meeting Intelligence.</p>
+  <p>Enter your Personal Access Token to authorize this connection. Each team member must authorize individually.</p>
+  <form method="POST" action="/oauth/consent">
+    <input type="hidden" name="session" value="{session}">
+    <input type="password" name="pat" placeholder="Paste your MI Personal Access Token" required>
+    <button type="submit">Authorize Connection</button>
+  </form>
+  <p class="info">Your PAT is used to verify your identity. The connecting application will receive a separate OAuth token.</p>
+</body>
+</html>""")
+
+        @app.post("/oauth/consent")
+        async def oauth_consent_submit(request):
+            """Process consent form — validate PAT, issue auth code, redirect."""
+            from starlette.responses import RedirectResponse as StarletteRedirect
+            form = await request.form()
+            session_id = form.get("session", "")
+            pat = form.get("pat", "")
+
+            if not session_id or not pat:
+                return HTMLResponse(
+                    "<html><body><h2>Missing session or token.</h2></body></html>",
+                    status_code=400,
+                )
+
+            # Validate the PAT using existing infrastructure
+            email = await validate_mcp_token(pat)
+            if not email:
+                # Re-render consent page with error
+                pending = _oauth_provider.get_pending_auth(session_id)
+                if not pending:
+                    return HTMLResponse(
+                        "<html><body><h2>Session expired. Please try connecting again.</h2></body></html>",
+                        status_code=400,
+                    )
+                client = pending["client"]
+                return HTMLResponse(f"""<!DOCTYPE html>
+<html>
+<head><title>Authorization Failed</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; }}
+  .error {{ color: #dc2626; background: #fef2f2; padding: 12px; border-radius: 6px; margin-bottom: 16px; }}
+  input[type=password] {{ width: 100%; padding: 10px; margin: 12px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }}
+  button {{ background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }}
+</style>
+</head>
+<body>
+  <h2>Authorize MCP Connection</h2>
+  <div class="error">Invalid token. Please check your Personal Access Token and try again.</div>
+  <p><strong>{client.client_name or client.client_id}</strong> wants to connect.</p>
+  <form method="POST" action="/oauth/consent">
+    <input type="hidden" name="session" value="{session_id}">
+    <input type="password" name="pat" placeholder="Paste your MI Personal Access Token" required>
+    <button type="submit">Authorize Connection</button>
+  </form>
+</body>
+</html>""", status_code=401)
+
+            # PAT valid — complete the OAuth authorization
+            try:
+                redirect_uri = _oauth_provider.complete_authorization(session_id, email)
+            except ValueError as e:
+                return HTMLResponse(
+                    f"<html><body><h2>Authorization failed: {e}</h2></body></html>",
+                    status_code=400,
+                )
+
+            logger.info("OAuth consent completed: user=%s, session=%s", email, session_id[:8])
+            return StarletteRedirect(url=redirect_uri, status_code=302)
+
+        logger.info("OAuth 2.1 routes mounted (DCR, PKCE, consent page)")
+    # ──────────────────────────────────────────────────────────────────
 
     # Mount Admin API (workspace CRUD + member management)
     app.include_router(admin_router, prefix="/api/admin")

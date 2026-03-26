@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # CORS origins (comma-separated URLs)
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # OAuth 2.1 (B17 — per-user MCP auth for Claude Teams / ChatGPT connectors)
+    jwt_secret: str = ""  # HS256 signing key for OAuth JWTs. Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    oauth_base_url: str = ""  # Public URL of this MI instance (e.g., https://fero.claritylayer.co.nz). Required for OAuth.
+
     # Branding
     favicon_path: str = ""  # Absolute path to per-client favicon (PNG). Empty = default favicon.svg.
 
