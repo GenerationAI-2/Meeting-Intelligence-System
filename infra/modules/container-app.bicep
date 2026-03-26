@@ -57,6 +57,9 @@ param appInsightsConnectionStringSecretUri string
 @description('Control database name (empty = workspace features disabled)')
 param controlDbName string = ''
 
+@description('Path to per-client favicon PNG inside the container (empty = default favicon.svg)')
+param faviconPath string = ''
+
 @description('Log Analytics workspace ID for Container Apps Environment')
 param logAnalyticsWorkspaceId string
 
@@ -127,6 +130,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'API_AZURE_CLIENT_ID', value: azureClientId }
             { name: 'ALLOWED_USERS', value: allowedUsers }
             { name: 'CORS_ORIGINS', value: corsOrigins }
+            { name: 'FAVICON_PATH', value: faviconPath }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', secretRef: 'appinsights-connection' }
           ]
           probes: [

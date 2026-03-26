@@ -46,6 +46,7 @@ param azureClientId = '<APP_REGISTRATION_CLIENT_ID>' // App Registration Applica
 param allowedUsers = '<EMAIL_1>,<EMAIL_2>'           // Comma-separated emails for web UI access
 param corsOrigins = 'https://placeholder'            // Updated automatically by deploy-new-client.sh Phase 4
 param minReplicas = 1                                // 1 for client-facing, 0 for internal
+// param faviconPath = '/app/favicons/<CLIENT_NAME>.png'  // Per-client favicon (add PNG to favicons/ dir)
 
 // --- Dynamic params (passed via environment variables at deploy time) ---
 param containerImageTag = readEnvironmentVariable('CONTAINER_IMAGE_TAG', 'latest')

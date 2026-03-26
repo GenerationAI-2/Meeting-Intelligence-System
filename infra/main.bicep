@@ -59,6 +59,9 @@ param environmentType string = 'prod'
 @description('Override Key Vault name (use when default name is blocked by soft-delete in another subscription)')
 param keyVaultNameOverride string = ''
 
+@description('Path to per-client favicon PNG inside the container (empty = default favicon.svg)')
+param faviconPath string = ''
+
 // === TAGS ===
 
 var tags = {
@@ -140,6 +143,7 @@ module containerApp 'modules/container-app.bicep' = {
     allowedUsers: allowedUsers
     corsOrigins: corsOrigins
     minReplicas: minReplicas
+    faviconPath: faviconPath
     appInsightsConnectionStringSecretUri: keyVault.outputs.appInsightsSecretUri
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }

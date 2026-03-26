@@ -22,9 +22,10 @@ param azureClientId = 'ae3e863e-6fda-4830-9573-6a774f0a10b8'
 
 // --- Access control ---
 param allowedUsers = 'gareth@victoryknives.co.nz,caleb.lucas@generationai.co.nz'
-param corsOrigins = 'https://ca-mi-prod-vknives.happysmoke-3c7c6e93.australiaeast.azurecontainerapps.io'     // Updated automatically by deploy-new-client.sh Phase 4
+param corsOrigins = 'https://ca-mi-prod-vknives.happysmoke-3c7c6e93.australiaeast.azurecontainerapps.io,https://victory-knives.claritylayer.co.nz'     // Custom domain added for claritylayer.co.nz
 param minReplicas = 0
 param keyVaultNameOverride = 'kv-mi-prod-vknives2'    // Original name blocked by soft-delete purge protection in MyAdvisor sub
+param faviconPath = '/app/favicons/vknives.png'
 
 // --- Dynamic params (passed via environment variables at deploy time) ---
 param containerImageTag = readEnvironmentVariable('CONTAINER_IMAGE_TAG', 'latest')

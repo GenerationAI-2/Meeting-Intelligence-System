@@ -22,8 +22,9 @@ param azureClientId = 'eb7a3e22-cefc-4815-965c-ba675e483de0'
 
 // --- Access control ---
 param allowedUsers = 'sam@fero.co.nz,caleb.lucas@generationai.co.nz'
-param corsOrigins = 'https://ca-mi-prod-fero.kindmushroom-a2d43986.australiaeast.azurecontainerapps.io'     // Updated automatically by deploy-new-client.sh Phase 4
+param corsOrigins = 'https://ca-mi-prod-fero.kindmushroom-a2d43986.australiaeast.azurecontainerapps.io,https://fero.claritylayer.co.nz'     // Custom domain added for claritylayer.co.nz
 param minReplicas = 1
+param faviconPath = '/app/favicons/fero.png'
 
 // --- Dynamic params (passed via environment variables at deploy time) ---
 param containerImageTag = readEnvironmentVariable('CONTAINER_IMAGE_TAG', 'latest')

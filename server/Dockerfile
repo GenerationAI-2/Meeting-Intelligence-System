@@ -63,6 +63,9 @@ COPY schema.sql schema.sql
 # Copy built frontend from Stage 1
 COPY --from=builder /app/dist/ static/
 
+# Copy per-client favicon assets (selected at runtime via FAVICON_PATH env var)
+COPY favicons/ favicons/
+
 # Set ownership of app directory to non-root user
 RUN chown -R appuser:appuser /app
 
