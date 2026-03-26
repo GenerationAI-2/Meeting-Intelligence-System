@@ -592,8 +592,11 @@ def run_http():
 
         # Mount as a Starlette sub-app so these take priority over the SPA catch-all.
         # Raw route insertion (app.routes.insert) loses to @app.get decorator routes.
-        for route in [*oauth_routes, *prm_routes]:
-            app.routes.insert(0, route)  # Insert before other routes
+        # Insert OAuth routes into the FastAPI router's route list at position 0.
+        # This ensures they're checked before the SPA catch-all ({full_path:path}).
+        # app.router.routes is the actual dispatch list FastAPI uses internally.
+        for _route in reversed([*oauth_routes, *prm_routes]):
+            app.router.routes.insert(0, _route)
 
         # ── Consent Page (PAT-based identity proof) ───────────────────
         @app.get("/oauth/consent")
