@@ -19,7 +19,7 @@ import time
 from typing import Any
 
 import jwt
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, AnyUrl
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -33,6 +33,23 @@ from mcp.server.auth.provider import (
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+
+
+class _PermissiveClient(OAuthClientInformationFull):
+    """Client that accepts any redirect_uri (for auto-registered clients).
+
+    ChatGPT and other AI clients may send their own client_id without DCR,
+    or a previous DCR may have been lost on redeploy. Security is enforced
+    at the PAT consent step, not at redirect_uri registration.
+    """
+
+    def validate_redirect_uri(self, redirect_uri: AnyUrl | None) -> AnyUrl:
+        if redirect_uri is not None:
+            return redirect_uri
+        if self.redirect_uris and len(self.redirect_uris) == 1:
+            return self.redirect_uris[0]
+        from mcp.shared.auth import InvalidRedirectUriError
+        raise InvalidRedirectUriError("redirect_uri is required")
 
 from .logging_config import get_logger
 
@@ -84,7 +101,21 @@ class MIOAuthProvider(OAuthAuthorizationServerProvider[MIAuthorizationCode, MIRe
     # ── Dynamic Client Registration (RFC 7591) ──────────────────────
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._clients.get(client_id)
+        client = self._clients.get(client_id)
+        if client is None and client_id:
+            # Auto-accept unknown client IDs (e.g. ChatGPT sends its own pre-assigned
+            # client_id without DCR, or a previous DCR registration was lost on redeploy).
+            # Security is enforced at the PAT consent step, not client registration.
+            client = _PermissiveClient(
+                client_id=client_id,
+                client_name=f"Auto-registered ({client_id[:8]})",
+                redirect_uris=["https://placeholder.invalid/callback"],
+                scope="mcp",
+                token_endpoint_auth_method="none",
+            )
+            self._clients[client_id] = client
+            logger.info("OAuth client auto-registered: %s", client_id)
+        return client
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         if client_info.client_id in self._clients:

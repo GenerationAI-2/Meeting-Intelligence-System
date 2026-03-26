@@ -98,8 +98,12 @@ def run_http():
             logger.info("Workspace cache evicted for %s (role/membership change)", email)
     _invalidate_user_cache_fn = _do_invalidate_user_cache
 
-    def _resolve_workspace_for_mcp(email: str) -> None:
-        """Resolve workspace context for MCP requests and set on contextvar.
+    def _resolve_workspace_for_mcp(email: str):
+        """Resolve workspace context for MCP requests.
+
+        Returns WorkspaceContext or None. Caller must call set_mcp_workspace_context()
+        in the async context (asyncio.to_thread copies contextvars but does NOT
+        propagate changes back to the caller).
 
         Uses in-memory cache with same TTL as token cache.
         In legacy mode (no control_db_name), always uses make_legacy_context.
@@ -109,8 +113,7 @@ def run_http():
         # Check cache first
         cached = _workspace_cache.get(email)
         if cached and cached["expires"] > now:
-            set_mcp_workspace_context(cached["ctx"])
-            return
+            return cached["ctx"]
 
         # Resolve workspace context
         if settings.control_db_name and _db_module.engine_registry:
@@ -119,7 +122,7 @@ def run_http():
                 from .workspace_context import WorkspaceContext
                 from .database import get_control_db
                 with get_control_db() as cursor:
-                    is_org_admin, default_ws_id, memberships = _get_user_memberships(cursor, email)
+                    is_org_admin, default_ws_id, memberships, _archived = _get_user_memberships(cursor, email)
                 if memberships:
                     active = _resolve_active_workspace(memberships, None, default_ws_id)
                     ctx = WorkspaceContext(
@@ -137,15 +140,15 @@ def run_http():
         else:
             ctx = make_legacy_context(email)
 
-        # Cache and set context (only if successfully resolved)
+        # Cache (only if successfully resolved)
         if ctx is not None:
             _workspace_cache[email] = {"ctx": ctx, "expires": _time.time() + TOKEN_CACHE_TTL}
             # Enforce max size
             if len(_workspace_cache) > TOKEN_CACHE_MAX_SIZE:
                 oldest_key = min(_workspace_cache, key=lambda k: _workspace_cache[k]["expires"])
                 del _workspace_cache[oldest_key]
-            set_mcp_workspace_context(ctx)
-        # else: ctx stays None — _resolve_ctx will return error dict in workspace mode
+
+        return ctx
 
     async def validate_mcp_token(token: str) -> str | None:
         """Validate MCP token. Returns client email if valid, None if not.
@@ -557,7 +560,9 @@ def run_http():
         if not email:
             return Response("Unauthorized", status_code=401)
         set_mcp_user(email)
-        await asyncio.to_thread(_resolve_workspace_for_mcp, email)
+        ctx = await asyncio.to_thread(_resolve_workspace_for_mcp, email)
+        if ctx is not None:
+            set_mcp_workspace_context(ctx)
 
         return await call_next(request)
 
@@ -642,7 +647,6 @@ def run_http():
         @app.post("/oauth/consent")
         async def oauth_consent_submit(request: Request):
             """Process consent form — validate PAT, issue auth code, redirect."""
-            from starlette.responses import RedirectResponse as StarletteRedirect
             form = await request.form()
             session_id = form.get("session", "")
             pat = form.get("pat", "")
@@ -696,7 +700,33 @@ def run_http():
                 )
 
             logger.info("OAuth consent completed: user=%s, session=%s", email, session_id[:8])
-            return StarletteRedirect(url=redirect_uri, status_code=302)
+            # Show success page that auto-redirects to complete OAuth flow.
+            # Claude opens auth in a tab it doesn't auto-close, so give the user
+            # a clear success message and a window.close() attempt.
+            import html as _html
+            safe_uri = _html.escape(redirect_uri, quote=True)
+            return HTMLResponse(f"""<!DOCTYPE html>
+<html>
+<head><title>Connected!</title>
+<meta http-equiv="refresh" content="2;url={safe_uri}">
+<style>
+  body {{ font-family: -apple-system, sans-serif; max-width: 480px; margin: 80px auto; padding: 0 20px; text-align: center; }}
+  .success {{ color: #16a34a; font-size: 48px; margin-bottom: 8px; }}
+  .info {{ color: #666; font-size: 14px; margin-top: 20px; }}
+  a {{ color: #2563eb; }}
+</style>
+</head>
+<body>
+  <div class="success">&#10003;</div>
+  <h2>Connection Authorized</h2>
+  <p>You can close this tab and return to Claude / ChatGPT.</p>
+  <p class="info">If this tab doesn't close automatically, <a href="{safe_uri}">click here</a> to complete the connection.</p>
+  <script>
+    // Try to close the tab (works if opened as popup by Claude)
+    setTimeout(function() {{ try {{ window.close(); }} catch(e) {{}} }}, 1500);
+  </script>
+</body>
+</html>""")
 
         logger.info("OAuth 2.1 routes mounted (DCR, PKCE, consent page)")
     # ──────────────────────────────────────────────────────────────────
