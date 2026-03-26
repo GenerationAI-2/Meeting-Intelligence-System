@@ -590,8 +590,10 @@ def run_http():
             scopes_supported=["mcp"],
         )
 
+        # Mount as a Starlette sub-app so these take priority over the SPA catch-all.
+        # Raw route insertion (app.routes.insert) loses to @app.get decorator routes.
         for route in [*oauth_routes, *prm_routes]:
-            app.routes.insert(0, route)  # Insert before SPA catch-all
+            app.routes.insert(0, route)  # Insert before other routes
 
         # ── Consent Page (PAT-based identity proof) ───────────────────
         @app.get("/oauth/consent")
@@ -815,9 +817,14 @@ def run_http():
             return FileResponse(os.path.join(static_dir, "index.html"))
 
         # SPA catch-all - must be defined LAST
+        # OAuth/well-known paths are Starlette routes (not @app.get decorators),
+        # so the catch-all would match first. Explicitly skip them here.
+        _NON_SPA_PREFIXES = ("/api", "/mcp", "/health", "/.well-known", "/authorize", "/token", "/register", "/revoke", "/oauth")
+
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
-            # Let API, MCP, and health routes pass through (they should be matched first)
+            if any(f"/{full_path}".startswith(p) for p in _NON_SPA_PREFIXES):
+                return Response("Not Found", status_code=404)
             return FileResponse(os.path.join(static_dir, "index.html"))
 
     logger.info("Starting Meeting Intelligence Server")
