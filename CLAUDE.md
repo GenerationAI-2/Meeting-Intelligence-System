@@ -1,6 +1,6 @@
 # Meeting Intelligence System - Agent Context
 
-**Last Updated:** 2026-02-27
+**Last Updated:** 2026-03-27
 **Project Status:** Phase 3 IN PROGRESS — Shape finalised 23 Feb
 **Owner:** Caleb Lucas
 
@@ -40,9 +40,12 @@ npm run dev  # Run on :5173
 **Removed env vars (27 Feb migration):**
 - `MCP_AUTH_TOKENS` — Removed. All envs now use DB-backed tokens (control DB `tokens` table or workspace DB `ClientToken` table).
 
-**Re-added env vars (26 Mar — B17 OAuth):**
+**Re-added env vars (26-27 Mar — B17 OAuth + Azure AD proxy):**
 - `JWT_SECRET` — Required for OAuth JWT signing (genai only)
-- `OAUTH_BASE_URL` — OAuth issuer URL, e.g. `https://mi-genai.greenbush-...` (genai only)
+- `OAUTH_BASE_URL` — Public URL of MI instance, e.g. `https://genai.claritylayer.co.nz` (genai only)
+- `AZURE_OAUTH_TENANT_ID` — MyAdvisor tenant ID for Azure AD proxy (genai only)
+- `AZURE_OAUTH_CLIENT_ID` — App Registration client ID for Azure AD proxy (genai only)
+- `AZURE_OAUTH_CLIENT_SECRET` — App Registration client secret for Azure AD proxy (genai only)
 
 ---
 
@@ -209,7 +212,7 @@ web/src/
 
 **Removed (27 Feb migration):** SSE transport (`/sse`), path-based token auth (`/mcp/{token}`), legacy `MCP_AUTH_TOKENS` env var, JWT dual-key rotation.
 
-**Re-added (26 Mar):** OAuth 2.1 (B17 fix) — DCR, PKCE, refresh tokens, revocation, protected resource metadata. Deployed to genai only. Uses MCP SDK's `OAuthAuthorizationServerProvider`. PAT-based consent flow. In-memory client/token storage (single-replica). Env vars: `JWT_SECRET`, `OAUTH_BASE_URL`.
+**Re-added (26-27 Mar):** OAuth 2.1 (B17 fix) — DCR, PKCE, refresh tokens, revocation, protected resource metadata. Deployed to genai only. Uses MCP SDK's `OAuthAuthorizationServerProvider`. **Phase 3 Azure AD proxy (27 Mar):** `/authorize` redirects to Azure AD login (`prompt=select_account`), `/oauth/callback` exchanges code for id_token and extracts email. DB-persisted client/token storage. Env vars: `JWT_SECRET`, `OAUTH_BASE_URL`, `AZURE_OAUTH_TENANT_ID`, `AZURE_OAUTH_CLIENT_ID`, `AZURE_OAUTH_CLIENT_SECRET`.
 
 ---
 
