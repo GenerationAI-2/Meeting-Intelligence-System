@@ -84,7 +84,7 @@ async def get_current_user(request: Request):
             except Exception:
                 return None
 
-        user_email = get_val(token_payload, "preferred_username") or get_val(token_payload, "upn") or get_val(token_payload, "email")
+        user_email = (get_val(token_payload, "preferred_username") or get_val(token_payload, "upn") or get_val(token_payload, "email") or "").lower() or None
     except Exception as e:
         # Map Azure Auth errors to 401
         logger.warning("Auth failed", extra={
