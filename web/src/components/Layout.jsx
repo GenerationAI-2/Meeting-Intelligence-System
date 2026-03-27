@@ -9,7 +9,7 @@ function Layout({ children }) {
     const account = useAccount(accounts[0] || {});
     const location = useLocation();
     const navigate = useNavigate();
-    const { isOrgAdmin, error: workspaceError } = useWorkspace();
+    const { isOrgAdmin, permissions, error: workspaceError } = useWorkspace();
 
     const [userMenuOpen, setUserMenuOpen] = useState(false);
     const userMenuRef = useRef(null);
@@ -86,7 +86,7 @@ function Layout({ children }) {
                                         >
                                             Settings
                                         </button>
-                                        {isOrgAdmin && (
+                                        {(isOrgAdmin || permissions.is_chair_or_admin) && (
                                             <button
                                                 onClick={() => { navigate('/admin/workspaces'); setUserMenuOpen(false); }}
                                                 className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
