@@ -415,6 +415,7 @@ class MIOAuthProvider(OAuthAuthorizationServerProvider[MIAuthorizationCode, MIRe
                 "scope": "openid profile email",
                 "state": session_id,
                 "response_mode": "query",
+                "prompt": "select_account",  # Force account picker — don't silently use SSO session
             })
             azure_url = (
                 f"https://login.microsoftonline.com/{self._azure_tenant_id}"
