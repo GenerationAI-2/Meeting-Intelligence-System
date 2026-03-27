@@ -401,6 +401,7 @@ async def list_workspaces(
                 JOIN workspace_members wm ON wm.workspace_id = w.id
                 JOIN users u ON u.id = wm.user_id
                 WHERE LOWER(u.email) = LOWER(?)
+                  AND wm.role = 'chair'
                 ORDER BY w.is_default DESC, w.name
                 """,
                 (ctx.user_email,),
