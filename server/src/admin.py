@@ -400,7 +400,7 @@ async def list_workspaces(
                 FROM workspaces w
                 JOIN workspace_members wm ON wm.workspace_id = w.id
                 JOIN users u ON u.id = wm.user_id
-                WHERE u.email = ?
+                WHERE LOWER(u.email) = LOWER(?)
                 ORDER BY w.is_default DESC, w.name
                 """,
                 (ctx.user_email,),
@@ -531,7 +531,7 @@ async def add_member(
             raise HTTPException(404, f"Workspace {workspace_id} not found")
 
         # Get or create user
-        cursor.execute("SELECT id FROM users WHERE email = ?", (body.email,))
+        cursor.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", (body.email,))
         user_row = cursor.fetchone()
         if user_row:
             user_id = user_row[0]
