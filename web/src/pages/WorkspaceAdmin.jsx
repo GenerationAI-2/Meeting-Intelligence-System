@@ -375,7 +375,7 @@ function WorkspaceAdmin() {
                                                     <select
                                                         value={m.role}
                                                         onChange={(e) => handleRoleChange(m.user_id, e.target.value)}
-                                                        className="text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                                        className="text-sm border border-gray-200 rounded pl-3 pr-8 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
                                                     >
                                                         <option value="viewer">Viewer</option>
                                                         <option value="member">Member</option>

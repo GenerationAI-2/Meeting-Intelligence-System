@@ -289,7 +289,7 @@ function ActionsList() {
                                                     handleStatusChange(action.id, e.target.value);
                                                 }}
                                                 onClick={(e) => e.stopPropagation()}
-                                                className={`rounded px-2 py-1 text-sm border-0 cursor-pointer ${action.status === 'Complete'
+                                                className={`rounded pl-3 pr-8 py-1.5 text-sm border-0 cursor-pointer ${action.status === 'Complete'
                                                         ? 'bg-green-100 text-green-800'
                                                         : action.status === 'Parked'
                                                             ? 'bg-yellow-100 text-yellow-800'
@@ -301,7 +301,7 @@ function ActionsList() {
                                                 <option value="Parked">Parked</option>
                                             </select>
                                         ) : (
-                                            <span className={`rounded px-2 py-1 text-sm ${action.status === 'Complete'
+                                            <span className={`rounded px-3 py-1.5 text-sm inline-block ${action.status === 'Complete'
                                                     ? 'bg-green-100 text-green-800'
                                                     : action.status === 'Parked'
                                                         ? 'bg-yellow-100 text-yellow-800'
