@@ -182,7 +182,7 @@ function DecisionsList() {
                 </div>
             )}
 
-            <div className="card overflow-x-auto">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto mb-6">
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                         <tr>

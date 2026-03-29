@@ -376,6 +376,14 @@ function WorkspaceAdmin() {
                                                         value={m.role}
                                                         onChange={(e) => handleRoleChange(m.user_id, e.target.value)}
                                                         className="text-sm border border-gray-200 rounded pl-3 pr-8 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                                        style={{
+                                                            appearance: 'none',
+                                                            WebkitAppearance: 'none',
+                                                            backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                                                            backgroundPosition: 'right 0.5rem center',
+                                                            backgroundSize: '1.25em 1.25em',
+                                                            backgroundRepeat: 'no-repeat'
+                                                        }}
                                                     >
                                                         <option value="viewer">Viewer</option>
                                                         <option value="member">Member</option>
