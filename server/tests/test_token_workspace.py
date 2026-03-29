@@ -50,8 +50,8 @@ class TestResolveActiveWorkspace:
         ws_a = _ws(1, "board")
         with pytest.raises(HTTPException) as exc_info:
             _resolve_active_workspace([ws_a], "ops", None)
-        assert exc_info.value.status_code == 403
-        assert "Not a member" in str(exc_info.value.detail)
+        assert exc_info.value.status_code == 404
+        assert "not found" in str(exc_info.value.detail).lower()
 
     def test_user_default_workspace(self):
         ws_a = _ws(1, "board")

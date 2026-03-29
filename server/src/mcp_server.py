@@ -99,18 +99,39 @@ def _resolve_ctx(workspace_override: str | None = None) -> WorkspaceContext | di
     # Apply workspace override: explicit param > cached switch > default
     effective_override = workspace_override or _workspace_override.get(ctx.user_email)
     if effective_override:
+        # Try ID first if numeric
+        if effective_override.isdigit():
+            for m in ctx.memberships:
+                if str(m.workspace_id) == effective_override:
+                    return WorkspaceContext(
+                        user_email=ctx.user_email,
+                        is_org_admin=ctx.is_org_admin,
+                        memberships=ctx.memberships,
+                        active=m,
+                    )
+        # Try exact matches (name, then display_name)
         for m in ctx.memberships:
-            if m.workspace_name == effective_override or str(m.workspace_id) == effective_override:
+            if m.workspace_name == effective_override or m.workspace_display_name == effective_override:
                 return WorkspaceContext(
                     user_email=ctx.user_email,
                     is_org_admin=ctx.is_org_admin,
                     memberships=ctx.memberships,
                     active=m,
                 )
+        # Try case-insensitive matches
+        for m in ctx.memberships:
+            if m.workspace_name.lower() == effective_override.lower() or m.workspace_display_name.lower() == effective_override.lower():
+                return WorkspaceContext(
+                    user_email=ctx.user_email,
+                    is_org_admin=ctx.is_org_admin,
+                    memberships=ctx.memberships,
+                    active=m,
+                )
+                
         # Only error if explicitly requested (not from stale cache)
         if workspace_override:
-            return {"error": True, "code": "FORBIDDEN",
-                    "message": f"Not a member of workspace '{workspace_override}'"}
+            return {"error": True, "code": "NOT_FOUND",
+                    "message": f"Workspace '{workspace_override}' not found"}
         # Stale override (e.g. removed from workspace) — clear it and use default
         _workspace_override.pop(ctx.user_email, None)
 

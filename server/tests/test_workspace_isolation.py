@@ -97,15 +97,15 @@ class TestUserASingleWorkspace:
         ws_a = _ws(1, "alpha", role="member", is_default=True)
         with pytest.raises(HTTPException) as exc_info:
             _resolve_active_workspace([ws_a], "bravo", None)
-        assert exc_info.value.status_code == 403
-        assert "Not a member" in str(exc_info.value.detail)
+        assert exc_info.value.status_code == 404
+        assert "not found" in str(exc_info.value.detail).lower()
 
     def test_user_a_cannot_access_ws_b_by_id(self):
         """User A requesting ws_b by ID should get 403."""
         ws_a = _ws(1, "alpha", role="member", is_default=True)
         with pytest.raises(HTTPException) as exc_info:
             _resolve_active_workspace([ws_a], "2", None)
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 404
 
 
 # --- User B: Separate Workspace ---
@@ -125,7 +125,7 @@ class TestUserBSeparateWorkspace:
         ws_b = _ws(2, "bravo", role="member", is_default=True)
         with pytest.raises(HTTPException) as exc_info:
             _resolve_active_workspace([ws_b], "alpha", None)
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 404
 
 
 # --- User C: Multi-Workspace Access ---
@@ -175,7 +175,7 @@ class TestUserCMultiWorkspace:
         memberships = _make_user_c_memberships()
         with pytest.raises(HTTPException) as exc_info:
             _resolve_active_workspace(memberships, "charlie", None)
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 404
 
 
 # --- Cross-Workspace Data Isolation ---

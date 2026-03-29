@@ -156,7 +156,7 @@ function WorkspaceAdmin() {
                 {isOrgAdmin && (
                     <button
                         onClick={() => setShowCreateForm(!showCreateForm)}
-                        className="px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-700 text-sm font-medium"
+                        className="btn-primary text-sm font-medium"
                     >
                         Create Workspace
                     </button>
@@ -209,14 +209,14 @@ function WorkspaceAdmin() {
                             <button
                                 type="submit"
                                 disabled={creating}
-                                className="px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-700 text-sm font-medium disabled:opacity-50"
+                                className="btn-primary text-sm font-medium disabled:opacity-50"
                             >
                                 {creating ? 'Creating...' : 'Create'}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => setShowCreateForm(false)}
-                                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm"
+                                className="btn-secondary text-sm"
                             >
                                 Cancel
                             </button>
@@ -281,7 +281,7 @@ function WorkspaceAdmin() {
                                     {isOrgAdmin && (
                                         <button
                                             onClick={() => handleArchiveToggle(selectedWorkspace)}
-                                            className={`px-3 py-1.5 text-sm rounded-md ${
+                                            className={`px-4 py-2 text-sm rounded-lg transition-colors ${
                                                 selectedWorkspace.is_archived
                                                     ? 'bg-green-50 text-green-700 hover:bg-green-100'
                                                     : 'bg-orange-50 text-orange-700 hover:bg-orange-100'
@@ -292,7 +292,7 @@ function WorkspaceAdmin() {
                                     )}
                                     <button
                                         onClick={() => setShowAddMember(!showAddMember)}
-                                        className="px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700 text-sm"
+                                        className="btn-primary text-sm"
                                     >
                                         Add Member
                                     </button>
@@ -338,7 +338,7 @@ function WorkspaceAdmin() {
                                         </div>
                                         <button
                                             type="submit"
-                                            className="px-4 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700 text-sm"
+                                            className="btn-primary text-sm whitespace-nowrap"
                                         >
                                             Add
                                         </button>
@@ -355,6 +355,7 @@ function WorkspaceAdmin() {
                                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
                                 </div>
                             ) : (
+                                <div className="overflow-x-auto">
                                 <table className="min-w-full">
                                     <thead>
                                         <tr className="bg-gray-50 border-b border-gray-200">
@@ -403,6 +404,7 @@ function WorkspaceAdmin() {
                                         )}
                                     </tbody>
                                 </table>
+                                </div>
                             )}
                         </div>
                     ) : (

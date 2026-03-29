@@ -102,15 +102,34 @@ def _resolve_active_workspace(
 
     # Explicit request via header
     if requested:
+        # Try ID first if numeric
+        if requested.isdigit():
+            for m in memberships:
+                if str(m.workspace_id) == requested:
+                    return m
+        # Try exact name match
         for m in memberships:
-            if m.workspace_name == requested or str(m.workspace_id) == requested:
+            if m.workspace_name == requested:
                 return m
+        # Try exact display_name match
+        for m in memberships:
+            if m.workspace_display_name == requested:
+                return m
+        # Try case-insensitive name match
+        for m in memberships:
+            if m.workspace_name.lower() == requested.lower():
+                return m
+        # Try case-insensitive display_name match
+        for m in memberships:
+            if m.workspace_display_name.lower() == requested.lower():
+                return m
+                
         # Check if the workspace was archived — fall back gracefully so UI recovers.
-        # If it's not archived, the user was never a member — 403.
+        # If it's not archived, the user was never a member — 404.
         if archived_ids and requested in archived_ids:
             logger.warning("Requested workspace '%s' is archived — falling back to default", requested)
         else:
-            raise HTTPException(403, f"Not a member of workspace '{requested}'")
+            raise HTTPException(404, f"Workspace '{requested}' not found")
 
     # User's default workspace
     if default_workspace_id:
