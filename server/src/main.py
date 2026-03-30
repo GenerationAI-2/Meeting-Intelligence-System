@@ -850,9 +850,32 @@ def run_http():
 
                 logger.info("Azure AD OAuth completed: user=%s, session=%s", user_email.lower(), state[:8])
 
-                # Redirect to MCP client (Claude/ChatGPT) with the MI auth code
-                from starlette.responses import RedirectResponse
-                return RedirectResponse(url=redirect_uri, status_code=302)
+                # Show success page, then redirect to MCP client with auth code.
+                # The JS redirect completes the OAuth flow; the HTML gives
+                # the user visual confirmation in case the client tab lingers.
+                import html as _html
+                safe_redirect = _html.escape(redirect_uri, quote=True)
+                return HTMLResponse(f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="1;url={safe_redirect}">
+<title>Connected</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+         display: flex; justify-content: center; align-items: center;
+         min-height: 100vh; margin: 0; background: #f8f9fa; color: #1a1a1a; }}
+  .card {{ text-align: center; padding: 2rem; }}
+  h2 {{ margin: 0 0 0.5rem; }}
+  p {{ color: #666; margin: 0; }}
+</style>
+</head><body>
+<div class="card">
+  <h2>Connecting...</h2>
+  <p>Please wait while we finish connecting to your AI client.</p>
+  <p style="color:#999; font-size:0.85rem; margin-top:1rem;">Do not close this tab — it will not authenticate properly.</p>
+</div>
+<script>window.location.href = "{safe_redirect}";</script>
+</body></html>""")
 
         logger.info("OAuth 2.1 routes mounted (DCR, PKCE, %s)",
                      "Azure AD proxy" if _oauth_provider._azure_ad_enabled else "PAT consent")
