@@ -870,9 +870,9 @@ def run_http():
 </style>
 </head><body>
 <div class="card">
-  <h2>Connecting...</h2>
-  <p>Please wait while we finish connecting to your AI client.</p>
-  <p style="color:#999; font-size:0.85rem; margin-top:1rem;">Do not close this tab — it will not authenticate properly.</p>
+  <h2>Almost there</h2>
+  <p>A dialog will ask you to open your AI client — click <strong>Open</strong> to complete the connection.</p>
+  <p style="color:#999; font-size:0.85rem; margin-top:1rem;">If you close this page before clicking Open, authentication will not complete.</p>
 </div>
 <script>window.location.href = "{safe_redirect}";</script>
 </body></html>""")
