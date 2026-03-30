@@ -12,11 +12,14 @@ from . import database as _db_module
 from .database import _get_engine, call_with_retry
 from .tools import meetings, actions, decisions, workspaces
 from .audit import audit_data_operation
+from .logging_config import get_logger
 from .schemas import (
     MeetingCreate, MeetingUpdate, MeetingId, MeetingSearch, MeetingListFilter,
     ActionCreate, ActionUpdate, ActionId, ActionListFilter,
     DecisionCreate, DecisionId, DecisionListFilter,
 )
+
+logger = get_logger(__name__)
 
 # Tool annotations per MCP spec — hints for client tool classification
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
@@ -138,15 +141,21 @@ def _resolve_ctx(workspace_override: str | None = None) -> WorkspaceContext | di
     return ctx
 
 
-def _mcp_tool_call(func, ctx, *, _audit=None, **kwargs):
+def _mcp_tool_call(func, ctx, *, _audit=None, _tool_name=None, **kwargs):
     """Execute a tool function with retry and cursor management.
 
     _audit: Optional tuple of (operation, entity_type, id_key) for audit logging.
             id_key is the key in the result dict that holds the entity ID.
             Only logs on success (no error in result).
+    _tool_name: MCP tool name for activity logging.
     """
     if isinstance(ctx, dict) and ctx.get("error"):
         return ctx  # Workspace resolution failed
+
+    # Activity log — who called what, in which workspace
+    user = get_mcp_user()
+    ws = ctx.active.workspace_display_name if hasattr(ctx, "active") and ctx.active else "unknown"
+    logger.info("MCP tool_call | user=%s | tool=%s | workspace=%s", user, _tool_name or func.__name__, ws)
     if _db_module.engine_registry:
         eng = _db_module.engine_registry.get_engine(ctx.db_name)
     else:
@@ -487,6 +496,7 @@ def search_decisions(query: str, limit: int = 10, workspace: str = None) -> dict
 
 @mcp.tool(description="Get field definitions, types, constraints, formats, and examples for all entities (Meeting, Action, Decision). Call this before creating or updating records to understand required fields and formats.", annotations=READ_ONLY)
 def get_schema() -> dict:
+    logger.info("MCP tool_call | user=%s | tool=get_schema | workspace=n/a", get_mcp_user())
     from .api import get_entity_schema
     return get_entity_schema()
 
@@ -500,6 +510,7 @@ def list_workspaces() -> dict:
     ctx = _resolve_ctx()
     if isinstance(ctx, dict):
         return ctx
+    logger.info("MCP tool_call | user=%s | tool=list_workspaces | workspace=%s", ctx.user_email, ctx.active.workspace_display_name if ctx.active else "unknown")
     return workspaces.list_workspaces(ctx)
 
 
@@ -508,6 +519,7 @@ def get_current_workspace() -> dict:
     ctx = _resolve_ctx()
     if isinstance(ctx, dict):
         return ctx
+    logger.info("MCP tool_call | user=%s | tool=get_current_workspace | workspace=%s", ctx.user_email, ctx.active.workspace_display_name if ctx.active else "unknown")
     return workspaces.get_current_workspace(ctx)
 
 
@@ -516,6 +528,7 @@ def switch_workspace(workspace: str) -> dict:
     ctx = _resolve_ctx(workspace)
     if isinstance(ctx, dict):
         return ctx
+    logger.info("MCP tool_call | user=%s | tool=switch_workspace | workspace=%s", ctx.user_email, ctx.active.workspace_display_name if ctx.active else "unknown")
     # Persist workspace preference so it carries across stateless HTTP requests
     _workspace_override[ctx.user_email] = ctx.active.workspace_name
     set_mcp_workspace_context(ctx)
