@@ -10,6 +10,7 @@ function ActionsList() {
     const [error, setError] = useState(null);
     const [statusFilter, setStatusFilter] = useState('Open');
     const [ownerFilter, setOwnerFilter] = useState('');
+    const [meetingFilter, setMeetingFilter] = useState('');
     const [owners, setOwners] = useState([]);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
@@ -27,6 +28,13 @@ function ActionsList() {
     useEffect(() => {
         loadActions();
     }, [page, statusFilter, ownerFilter, workspaceVersion]);
+
+    // Derive distinct meetings from loaded actions for the filter dropdown
+    const meetingOptions = [...new Map(
+        actions
+            .filter(a => a.meeting_id && a.meeting_title)
+            .map(a => [a.meeting_id, { id: a.meeting_id, title: a.meeting_title }])
+    ).values()].sort((a, b) => a.title.localeCompare(b.title));
 
     async function loadActions() {
         try {
@@ -98,7 +106,11 @@ function ActionsList() {
         });
     }
 
-    const sortedActions = [...actions];
+    const filteredActions = meetingFilter
+        ? actions.filter(a => String(a.meeting_id) === meetingFilter)
+        : actions;
+
+    const sortedActions = [...filteredActions];
     if (sortColumn) {
         sortedActions.sort((a, b) => {
             let aVal = a[sortColumn];
@@ -231,6 +243,19 @@ function ActionsList() {
                             ))}
                         </select>
                     </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Meeting</label>
+                        <select
+                            value={meetingFilter}
+                            onChange={(e) => setMeetingFilter(e.target.value)}
+                            className="rounded-lg border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2"
+                        >
+                            <option value="">All meetings</option>
+                            {meetingOptions.map((m) => (
+                                <option key={m.id} value={String(m.id)}>{m.title}</option>
+                            ))}
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -323,10 +348,10 @@ function ActionsList() {
                                         {action.meeting_id ? (
                                             <Link
                                                 to={`/meetings/${action.meeting_id}`}
-                                                className="text-brand-600 hover:text-brand-700"
+                                                className="text-brand-600 hover:text-brand-700 text-sm"
                                                 onClick={(e) => e.stopPropagation()}
                                             >
-                                                View Meeting
+                                                {action.meeting_title || 'View Meeting'}
                                             </Link>
                                         ) : '-'}
                                     </td>

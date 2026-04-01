@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-import { meetingsApi } from '../services/api';
+import { meetingsApi, actionsApi } from '../services/api';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 
 function MeetingDetail() {
@@ -59,6 +59,20 @@ function MeetingDetail() {
             setError(err.message);
         } finally {
             setSaving(false);
+        }
+    }
+
+    async function handleActionStatusChange(actionId, newStatus) {
+        try {
+            await actionsApi.updateStatus(actionId, newStatus);
+            setMeeting(prev => ({
+                ...prev,
+                actions: prev.actions.map(a =>
+                    a.id === actionId ? { ...a, status: newStatus } : a
+                ),
+            }));
+        } catch (err) {
+            console.error('Failed to update action status:', err);
         }
     }
 
@@ -268,14 +282,39 @@ function MeetingDetail() {
                                                 {action.owner} {action.due_date && `• Due ${action.due_date}`}
                                             </p>
                                         </div>
-                                        <span className={`px-2 py-1 text-xs rounded-full ${action.status === 'Complete'
-                                                ? 'bg-green-100 text-green-800'
-                                                : action.status === 'Parked'
-                                                    ? 'bg-yellow-100 text-yellow-800'
-                                                    : 'bg-blue-100 text-blue-800'
-                                            }`}>
-                                            {action.status}
-                                        </span>
+                                        {permissions.can_write ? (
+                                            <select
+                                                value={action.status}
+                                                onChange={(e) => handleActionStatusChange(action.id, e.target.value)}
+                                                className={`rounded pl-3 pr-8 py-1.5 text-xs border-0 cursor-pointer ${action.status === 'Complete'
+                                                        ? 'bg-green-100 text-green-800'
+                                                        : action.status === 'Parked'
+                                                            ? 'bg-yellow-100 text-yellow-800'
+                                                            : 'bg-blue-100 text-blue-800'
+                                                    }`}
+                                                style={{
+                                                    appearance: 'none',
+                                                    WebkitAppearance: 'none',
+                                                    backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                                                    backgroundPosition: 'right 0.5rem center',
+                                                    backgroundSize: '1.25em 1.25em',
+                                                    backgroundRepeat: 'no-repeat'
+                                                }}
+                                            >
+                                                <option value="Open">Open</option>
+                                                <option value="Complete">Complete</option>
+                                                <option value="Parked">Parked</option>
+                                            </select>
+                                        ) : (
+                                            <span className={`px-2 py-1 text-xs rounded-full ${action.status === 'Complete'
+                                                    ? 'bg-green-100 text-green-800'
+                                                    : action.status === 'Parked'
+                                                        ? 'bg-yellow-100 text-yellow-800'
+                                                        : 'bg-blue-100 text-blue-800'
+                                                }`}>
+                                                {action.status}
+                                            </span>
+                                        )}
                                     </li>
                                 ))}
                             </ul>
