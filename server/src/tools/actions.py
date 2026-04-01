@@ -39,28 +39,30 @@ def list_actions(
     params = []
 
     if status:
-        conditions.append("Status = ?")
+        conditions.append("a.Status = ?")
         params.append(status)
 
     if owner:
-        conditions.append("Owner LIKE ?")
+        conditions.append("a.Owner LIKE ?")
         params.append(f"%{owner}%")
 
     if meeting_id:
-        conditions.append("MeetingId = ?")
+        conditions.append("a.MeetingId = ?")
         params.append(meeting_id)
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
     params.append(limit)
 
     cursor.execute(f"""
-        SELECT ActionId, ActionText, Owner, DueDate, Status, MeetingId
-        FROM Action
+        SELECT a.ActionId, a.ActionText, a.Owner, a.DueDate, a.Status, a.MeetingId,
+               m.Title AS MeetingTitle
+        FROM Action a
+        LEFT JOIN Meeting m ON m.MeetingId = a.MeetingId
         WHERE {where_clause}
         ORDER BY
-            CASE WHEN DueDate IS NULL THEN 1 ELSE 0 END,
-            DueDate ASC,
-            CreatedAt ASC
+            CASE WHEN a.DueDate IS NULL THEN 1 ELSE 0 END,
+            a.DueDate ASC,
+            a.CreatedAt ASC
         OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
     """, tuple(params))
 
@@ -73,7 +75,8 @@ def list_actions(
             "owner": row[2],
             "due_date": row[3].isoformat() if row[3] else None,
             "status": row[4],
-            "meeting_id": row[5]
+            "meeting_id": row[5],
+            "meeting_title": row[6],
         })
 
     return {"actions": actions, "count": len(actions)}
